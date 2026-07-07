@@ -53,11 +53,14 @@ Service `_mads-remote._tcp`, ein Service pro Instanz, TXT-Keys:
 | **P0.2** | ✅ | Bridge-Skelett `src-tauri/src/bridge.rs`: TLS 1.3 (self-signed, SPKI-TOFU) + mDNS-Advertise + WSS-Accept + roher stdout-Tee. Read-only Live-Mirror. |
 | **P0.3** | ✅ | Command-Forward: `validate_command()` erzwingt Kanal `command` + `HostMessage`-Typ-Allowlist, lehnt `bypassPermissions`/`dontAsk` hart ab (RCE-Schutz), re-serialisiert kanonisch (Anti-NDJSON-Injection) → `send_line` (stdin). 16 Rust-Tests grün. |
 | **P1.1** | ✅ | Per-Verbindungs-`FsScope` (§9.5-Fix) + file-rpc-Dispatch (`register_root`/`read_dir`/`read_file`) mit `file-rpc-reply`. Schreib-Ops folgen mit dem Editor (P3.2). `files.rs`-Sicherheitskern unverändert. 21 Rust-Tests grün. |
+| **P1.2** | ✅ | Pairing + Auth: `auth.rs` (SQLite-Geräte, einmaliger PIN 60 s/≤5, Argon2id-Token `deviceId.secret`, Widerruf). Bridge verlangt `pair`/`auth`; Tee nur an authentifizierte, `command`/`file-rpc` vor Auth abgelehnt, Widerruf trennt Sockets. mads-Pairing-UI (PIN + QR, Geräteliste) in `SettingsPanel`. **27 Rust-Tests grün.** |
 | **P1.2** | ⏳ | Pairing (PIN/QR) + Argon2-Token (SQLite) + per-Frame-Auth + Widerruf. |
 
-> **Sicherheits-Gate:** Die Bridge läuft nur mit **`MADS_REMOTE_BRIDGE=1`**, weil sie bis
-> einschließlich P0.2 **noch auth-los** ist. Der stdout-Tee selbst ist immer aktiv, aber ohne
-> laufende Bridge ohne Empfänger (kein Overhead, kein Netz-Exposure).
+> **Sicherheits-Gate:** Die Bridge (WSS/mDNS) läuft nur mit **`MADS_REMOTE_BRIDGE=1`** — ein
+> bewusster Opt-in für ein sicherheitssensibles Feature. Seit P1.2 ist sie **auth-vollständig**
+> (Pairing/Token/Widerruf), das Gate schützt also nur noch vor unbeabsichtigtem Netz-Exposure, nicht
+> mehr vor Auth-Losigkeit. Die Auth-DB + Pairing-Commands sind auch ohne Gate aktiv (das UI kann so
+> „Bridge nicht aktiv" anzeigen). Der stdout-Tee ist immer aktiv, aber ohne Bridge ohne Empfänger.
 
 ### Manuelle Abnahme P0.2 (am Mac)
 
