@@ -44,3 +44,29 @@ Service `_mads-remote._tcp`, ein Service pro Instanz, TXT-Keys:
 | `project` | `repoRoot`-Basename |
 | `pv` | `PROTOCOL_VERSION` |
 | `fp` | TLS-SPKI-Fingerprint (nur **Hinweis** — autoritativ ist der beim Pairing gepinnte fp) |
+
+## Implementierungs-Status (mads-Repo, Branch `feat/remote-bridge`)
+
+| Phase | Stand | Was |
+|-------|-------|-----|
+| **P0.1** | ✅ | `request_snapshot`-HostMessage + Orchestrator-Re-Emit (`shared/protocol.ts`, `sidecar/src/orchestrator.ts`). |
+| **P0.2** | ✅ | Bridge-Skelett `src-tauri/src/bridge.rs`: TLS 1.3 (self-signed, SPKI-TOFU) + mDNS-Advertise + WSS-Accept + roher stdout-Tee. Read-only Live-Mirror. |
+| **P0.3** | ⏳ | Command-Forward: Client-Frames gegen `HostMessage` validieren → `send_line` (stdin); `bypassPermissions`/`dontAsk` ablehnen. |
+| **P1.1** | ⏳ | Per-Verbindungs-`FsScope` + file-rpc. |
+| **P1.2** | ⏳ | Pairing (PIN/QR) + Argon2-Token (SQLite) + per-Frame-Auth + Widerruf. |
+
+> **Sicherheits-Gate:** Die Bridge läuft nur mit **`MADS_REMOTE_BRIDGE=1`**, weil sie bis
+> einschließlich P0.2 **noch auth-los** ist. Der stdout-Tee selbst ist immer aktiv, aber ohne
+> laufende Bridge ohne Empfänger (kein Overhead, kein Netz-Exposure).
+
+### Manuelle Abnahme P0.2 (am Mac)
+
+```bash
+MADS_REMOTE_BRIDGE=1 npm run tauri dev        # oder die installierte .app mit gesetzter Env-Var
+dns-sd -B _mads-remote._tcp                    # Service erscheint im LAN
+openssl s_client -connect <host>:<port>        # zeigt TLS 1.3 + self-signed cert
+wscat --no-check -c wss://<host>:<port>         # empfängt Live-Agent-Events (roher NDJSON-Tee)
+```
+
+Automatisiert verifiziert (ohne GUI): `cargo test --lib` — `tee_reaches_tls_ws_client`
+(TLS-1.3-Handshake + WSS + Tee end-to-end) und `advertise_starts_or_is_sandboxed`.
