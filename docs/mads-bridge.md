@@ -52,7 +52,7 @@ Service `_mads-remote._tcp`, ein Service pro Instanz, TXT-Keys:
 | **P0.1** | ✅ | `request_snapshot`-HostMessage + Orchestrator-Re-Emit (`shared/protocol.ts`, `sidecar/src/orchestrator.ts`). |
 | **P0.2** | ✅ | Bridge-Skelett `src-tauri/src/bridge.rs`: TLS 1.3 (self-signed, SPKI-TOFU) + mDNS-Advertise + WSS-Accept + roher stdout-Tee. Read-only Live-Mirror. |
 | **P0.3** | ✅ | Command-Forward: `validate_command()` erzwingt Kanal `command` + `HostMessage`-Typ-Allowlist, lehnt `bypassPermissions`/`dontAsk` hart ab (RCE-Schutz), re-serialisiert kanonisch (Anti-NDJSON-Injection) → `send_line` (stdin). 16 Rust-Tests grün. |
-| **P1.1** | ⏳ | Per-Verbindungs-`FsScope` + file-rpc. |
+| **P1.1** | ✅ | Per-Verbindungs-`FsScope` (§9.5-Fix) + file-rpc-Dispatch (`register_root`/`read_dir`/`read_file`) mit `file-rpc-reply`. Schreib-Ops folgen mit dem Editor (P3.2). `files.rs`-Sicherheitskern unverändert. 21 Rust-Tests grün. |
 | **P1.2** | ⏳ | Pairing (PIN/QR) + Argon2-Token (SQLite) + per-Frame-Auth + Widerruf. |
 
 > **Sicherheits-Gate:** Die Bridge läuft nur mit **`MADS_REMOTE_BRIDGE=1`**, weil sie bis
