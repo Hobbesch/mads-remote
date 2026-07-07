@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Liste der gefundenen mads-Instanzen (P2.1). Tippen → Verbinden/Pairing kommt in P2.2/P2.3.
+/// Liste der gefundenen mads-Instanzen. Tippen → verbinden/koppeln (InstanceDetailView).
 struct InstanceListView: View {
     let browser: InstanceBrowser
 
@@ -14,7 +14,11 @@ struct InstanceListView: View {
                 }
             } else {
                 ForEach(browser.instances) { instance in
-                    InstanceRow(instance: instance)
+                    NavigationLink {
+                        InstanceDetailView(instance: instance)
+                    } label: {
+                        InstanceRow(instance: instance)
+                    }
                 }
             }
         }

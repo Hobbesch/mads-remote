@@ -45,6 +45,9 @@
 	<!-- Bonjour/Local Network: nötig, damit NWBrowser _mads-remote._tcp im LAN finden darf. -->
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>mads Remote findet und verbindet deine mads-Instanzen im lokalen Netz.</string>
+	<!-- Kamera: nur fürs Scannen des Pairing-QR-Codes (VisionKit DataScanner). -->
+	<key>NSCameraUsageDescription</key>
+	<string>Zum Scannen des mads-Pairing-QR-Codes.</string>
 	<key>NSBonjourServices</key>
 	<array>
 		<string>_mads-remote._tcp</string>

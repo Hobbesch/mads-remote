@@ -1,45 +1,44 @@
 import Foundation
 
+/// Ereignisse aus dem Receive-Loop, die die Session (InstanceSession) braucht (Token speichern etc.).
+enum ConnectionEvent: Sendable {
+    case authenticated(deviceId: String)
+    case paired(token: String, deviceId: String)
+    case pairRejected(String)
+    case failed(String)
+}
+
 /// WSS-Verbindung zu einer mads-Instanz (docs/architecture.md §3a). `URLSessionWebSocketTask` mit
-/// SPKI-Pinning am Session-Delegate; Receive-Loop decodiert Frames und spiegelt sie in den
-/// `InstanceStore` (MainActor-Hop). Als `actor` gekapselt, damit Senden/Empfangen/State thread-safe
-/// sind. Auth (`pair`/`auth`) senden die Aufrufer; die UI dafür kommt in P2.3.
+/// SPKI-Pinning am Session-Delegate; Receive-Loop decodiert Frames, spiegelt Events in den
+/// `InstanceStore` (MainActor-Hop) und meldet Auth-/Pairing-Ergebnisse über `events`.
 actor SocketConnection {
-    enum State: Sendable, Equatable {
-        case idle, connecting, connected, authenticated
-        case failed(String)
-    }
+    nonisolated let events: AsyncStream<ConnectionEvent>
 
     private let url: URL
     private let store: InstanceStore
     private let session: URLSession
     private let delegate: PinningDelegate
+    private let eventsCont: AsyncStream<ConnectionEvent>.Continuation
     private var task: URLSessionWebSocketTask?
-    private(set) var state: State = .idle
 
     init(host: String, port: UInt16, pinnedFingerprintHex: String, store: InstanceStore) {
         self.url = URL(string: "wss://\(host):\(port)/")!
         self.store = store
         self.delegate = PinningDelegate(pinnedFingerprintHex: pinnedFingerprintHex)
         self.session = URLSession(configuration: .ephemeral, delegate: delegate, delegateQueue: nil)
+        (self.events, self.eventsCont) = AsyncStream.makeStream()
     }
 
     func connect() {
         guard task == nil else { return }
         let task = session.webSocketTask(with: url)
         self.task = task
-        state = .connecting
         task.resume()
         Task { await receiveLoop() }
     }
 
-    func authenticate(token: String) async throws {
-        try await send(OutgoingFrame.auth(token: token))
-    }
-
-    func pair(pin: String, name: String) async throws {
-        try await send(OutgoingFrame.pair(pin: pin, name: name))
-    }
+    func authenticate(token: String) async throws { try await send(OutgoingFrame.auth(token: token)) }
+    func pair(pin: String, name: String) async throws { try await send(OutgoingFrame.pair(pin: pin, name: name)) }
 
     func send(_ text: String) async throws {
         guard let task else { throw URLError(.notConnectedToInternet) }
@@ -49,14 +48,13 @@ actor SocketConnection {
     func disconnect() {
         task?.cancel(with: .goingAway, reason: nil)
         task = nil
-        state = .idle
+        eventsCont.finish()
     }
 
     // MARK: - intern
 
     private func receiveLoop() async {
         guard let task else { return }
-        state = .connected
         while true {
             do {
                 switch try await task.receive() {
@@ -66,7 +64,9 @@ actor SocketConnection {
                 @unknown default: break
                 }
             } catch {
-                state = .failed(String(describing: error)) // deckt Pin-Mismatch (TLS-Abbruch) mit ab
+                // Deckt auch den Pin-Mismatch ab (TLS-Trust-Abbruch → receive() wirft).
+                eventsCont.yield(.failed(String(describing: error)))
+                eventsCont.finish()
                 return
             }
         }
@@ -77,8 +77,18 @@ actor SocketConnection {
         switch frame.channel {
         case "event", "snapshot":
             if let msg = frame.msg { await store.apply(msg) }
-        case "pair-reply", "auth-reply":
-            if frame.ok == true { state = .authenticated }
+        case "pair-reply":
+            if frame.ok == true, let token = frame.token, let dev = frame.deviceId {
+                eventsCont.yield(.paired(token: token, deviceId: dev))
+            } else {
+                eventsCont.yield(.pairRejected(frame.error ?? "Pairing fehlgeschlagen"))
+            }
+        case "auth-reply":
+            if frame.ok == true {
+                eventsCont.yield(.authenticated(deviceId: frame.deviceId ?? ""))
+            } else {
+                eventsCont.yield(.failed(frame.error ?? "Authentifizierung fehlgeschlagen"))
+            }
         default:
             break
         }
