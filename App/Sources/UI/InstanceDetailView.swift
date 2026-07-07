@@ -17,7 +17,7 @@ struct InstanceDetailView: View {
             case .needsPairing:
                 PairingView(session: session)
             case .live:
-                StreamsView(store: session.store)
+                StreamsView(session: session)
             case .failed(let reason):
                 ContentUnavailableView {
                     Label("Nicht verbunden", systemImage: "exclamationmark.triangle")

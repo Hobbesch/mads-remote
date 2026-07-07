@@ -64,6 +64,60 @@ final class InstanceSession {
         phase = .idle
     }
 
+    // MARK: - Command-Plane (P3.1) — die App fernsteuert
+
+    /// Sendet einen command-Frame. `true` = auf den Socket geschrieben (kein Wurf). KEIN echtes Ack
+    /// (es gibt kein Ack-Protokoll) — fängt aber die realen Fehlerfälle ab: kein Socket / Verbindung
+    /// nil / geschlossener Socket. Bei Fehler wird eine Notiz für die UI gesetzt.
+    @discardableResult
+    private func sendCommand(_ hostMessage: [String: Any]) async -> Bool {
+        guard let conn = connection else {
+            store.noteError("Nicht verbunden.")
+            return false
+        }
+        do {
+            try await conn.send(OutgoingFrame.command(hostMessage: hostMessage))
+            return true
+        } catch {
+            store.noteError("Senden fehlgeschlagen: \(error.localizedDescription)")
+            return false
+        }
+    }
+
+    /// `true` = zugestellt (der Composer leert das Eingabefeld erst dann).
+    @discardableResult
+    func sendInput(agentId: String, text: String) async -> Bool {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+        return await sendCommand(["type": "send_input", "agentId": agentId, "text": trimmed])
+    }
+
+    func interrupt(agentId: String) async { await sendCommand(["type": "interrupt_agent", "agentId": agentId]) }
+    func stopAgent(agentId: String) async { await sendCommand(["type": "stop_agent", "agentId": agentId]) }
+
+    /// Berechtigungsanfrage beantworten — NUR aus einem expliziten Nutzer-Tap (§6 P3#16).
+    /// Guard gegen Doppel-Antwort (Anfrage noch offen?); optimistisch entfernen (schließt das
+    /// Doppel-Tap-Fenster über den await hinweg); bei Sende-Fehler wieder einblenden.
+    func answerPermission(agentId: String, requestId: String, allow: Bool) async {
+        guard let req = store.permissions.first(where: { $0.requestId == requestId }) else { return }
+        store.removePermission(requestId: requestId)
+
+        let decision: [String: Any] = allow
+            ? ["behavior": "allow"]
+            : ["behavior": "deny", "message": "Aus der Ferne abgelehnt"]
+        let delivered = await sendCommand([
+            "type": "answer_permission", "agentId": agentId, "requestId": requestId, "decision": decision,
+        ])
+        if !delivered {
+            store.restorePermission(req) // Antwort kam nicht raus → wieder anzeigen (noteError ist gesetzt)
+        }
+    }
+
+    /// Einfache `{ type, agentId }`-Aktion (sync_branch/create_pr/gate_task/integrate_pr/update_main/…).
+    func streamAction(_ type: String, agentId: String) async {
+        await sendCommand(["type": type, "agentId": agentId])
+    }
+
     // MARK: - intern
 
     private func consumeEvents(of conn: SocketConnection, tofuFingerprint: String) {

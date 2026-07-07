@@ -1,26 +1,35 @@
 import SwiftUI
 
-/// Live-Streams-Übersicht einer verbundenen Instanz (spiegelt den `InstanceStore`).
+/// Live-Streams-Übersicht einer verbundenen Instanz (spiegelt den `InstanceStore`) mit dem
+/// prominenten Permission-Banner darüber.
 struct StreamsView: View {
-    let store: InstanceStore
+    let session: InstanceSession
+
+    private var store: InstanceStore { session.store }
 
     var body: some View {
-        List {
-            if let project = store.project {
-                Section("Projekt") {
-                    Text("\(project.owner)/\(project.repo)").font(.headline)
-                }
+        VStack(spacing: 0) {
+            if !store.permissions.isEmpty {
+                ScrollView { PermissionBanner(session: session) }
+                    .frame(maxHeight: 220)
             }
-            Section("Streams") {
-                if store.order.isEmpty {
-                    Text("Keine aktiven Streams").foregroundStyle(.secondary)
-                } else {
-                    ForEach(store.order, id: \.self) { id in
-                        if let stream = store.streams[id] {
-                            NavigationLink {
-                                StreamDetailView(store: store, streamId: id)
-                            } label: {
-                                StreamRow(stream: stream)
+            List {
+                if let project = store.project {
+                    Section("Projekt") {
+                        Text("\(project.owner)/\(project.repo)").font(.headline)
+                    }
+                }
+                Section("Streams") {
+                    if store.order.isEmpty {
+                        Text("Keine aktiven Streams").foregroundStyle(.secondary)
+                    } else {
+                        ForEach(store.order, id: \.self) { id in
+                            if let stream = store.streams[id] {
+                                NavigationLink {
+                                    StreamDetailView(session: session, streamId: id)
+                                } label: {
+                                    StreamRow(stream: stream)
+                                }
                             }
                         }
                     }

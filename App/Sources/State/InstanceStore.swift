@@ -39,6 +39,9 @@ final class InstanceStore {
     private(set) var order: [String] = []
     private(set) var streams: [String: Stream] = [:]
     private(set) var lastError: String?
+    /// Offene Berechtigungsanfragen — treiben das prominente Banner. Werden NUR durch expliziten
+    /// menschlichen Tap beantwortet (docs/architecture.md §6 P3#16), nie automatisch.
+    private(set) var permissions: [PermissionRequestInfo] = []
 
     private var timelineSeq = 0
     private let ringCapacity = 800
@@ -67,12 +70,32 @@ final class InstanceStore {
         case .needsInput(let id, _, _):
             mutate(id) { $0.status = .waitingInput }
         case .permissionRequest(let req):
+            if !permissions.contains(where: { $0.requestId == req.requestId }) {
+                permissions.append(req)
+            }
             mutate(req.agentId) { $0.status = .escalation }
         case .error(_, _, _, let message, _):
             lastError = message
         case .unknown:
             break
         }
+    }
+
+    /// Eine (optimistisch) entfernte Berechtigungsanfrage entfernen.
+    func removePermission(requestId: String) {
+        permissions.removeAll { $0.requestId == requestId }
+    }
+
+    /// Eine optimistisch entfernte Anfrage wieder einblenden (wenn das Senden der Antwort fehlschlug).
+    func restorePermission(_ req: PermissionRequestInfo) {
+        if !permissions.contains(where: { $0.requestId == req.requestId }) {
+            permissions.append(req)
+        }
+    }
+
+    /// Einen (Sende-)Fehler für die UI vermerken.
+    func noteError(_ message: String) {
+        lastError = message
     }
 
     // MARK: - intern

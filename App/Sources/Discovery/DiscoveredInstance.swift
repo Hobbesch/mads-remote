@@ -36,3 +36,18 @@ struct DiscoveredInstance: Identifiable, Hashable, Sendable {
         return (name, txt["project"] ?? "", txt["pid"], txt["pv"], txt["fp"])
     }
 }
+
+#if DEBUG
+extension DiscoveredInstance {
+    /// Nur für Tests: konstruiert eine Instanz ohne `NWBrowser.Result`.
+    init(testId: String, name: String, project: String, fingerprint: String?) {
+        self.id = testId
+        self.name = name
+        self.project = project
+        self.pid = nil
+        self.protocolVersion = nil
+        self.fingerprint = fingerprint
+        self.endpoint = .hostPort(host: "127.0.0.1", port: 1)
+    }
+}
+#endif
