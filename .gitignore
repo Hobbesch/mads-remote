@@ -80,3 +80,6 @@ pnpm-debug.log*
 
 # ── Claude Code (maschinenspezifisch) ────────────────────────────────────────
 .claude/settings.local.json
+
+# Lokale Signing-Config (Team-ID) — nur .example wird committet
+Signing.xcconfig

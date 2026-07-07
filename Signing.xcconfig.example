@@ -1,0 +1,12 @@
+// Vorlage für die lokale Code-Signing-Konfiguration.
+// Kopiere diese Datei nach `Signing.xcconfig` (die ist gitignored) und trage dein Team ein —
+// ODER lass es leer und wähle das Team in Xcode unter „Signing & Capabilities".
+//
+// DEVELOPMENT_TEAM = dein 10-stelliges Apple Development Team.
+//   Finden: Xcode → Settings… → Accounts → deinen Apple-ID-Account wählen → „Team" (die ID in
+//   Klammern), oder https://developer.apple.com/account (Membership → Team ID).
+//   Ein kostenloser Apple-Account („Personal Team") funktioniert auch — mit Einschränkungen
+//   (App läuft 7 Tage, dann neu deployen; max. 3 Apps).
+//
+// Simulator-Builds brauchen KEIN Team (leer lassen ist ok).
+DEVELOPMENT_TEAM =
