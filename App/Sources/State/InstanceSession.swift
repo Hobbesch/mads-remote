@@ -118,6 +118,45 @@ final class InstanceSession {
         await sendCommand(["type": type, "agentId": agentId])
     }
 
+    // MARK: - file-rpc (P3.2) — Datei-Baum + Markdown lesen/schreiben
+
+    /// Request bauen (Args auf dem MainActor) und nur den fertigen String an die Actor reichen.
+    /// Ein Server-Fehler (`{ok:false,error}`) wird für die UI vermerkt — damit unterscheidbar von
+    /// einem reinen Decode-Fehler und die echte Ursache sichtbar (statt „nicht erreichbar" zu raten).
+    private func rawFileRPC(op: String, args: [String: Any]) async -> String {
+        guard let conn = connection else { return #"{"ok":false,"error":"Nicht verbunden"}"# }
+        let id = UUID().uuidString
+        let text = await conn.request(id: id, text: OutgoingFrame.fileRPC(id: id, op: op, args: args))
+        if let env = try? JSONDecoder().decode(OkEnvelope.self, from: Data(text.utf8)), !env.ok {
+            store.noteError(env.error ?? "Dateizugriff fehlgeschlagen")
+        }
+        return text
+    }
+
+    @discardableResult
+    func registerRoot(_ path: String) async -> Bool {
+        let text = await rawFileRPC(op: "register_root", args: ["path": path])
+        return (try? JSONDecoder().decode(OkEnvelope.self, from: Data(text.utf8)))?.ok ?? false
+    }
+
+    func readDir(_ path: String) async -> [DirNode] {
+        let text = await rawFileRPC(op: "read_dir", args: ["path": path])
+        return (try? JSONDecoder().decode(FileRPCEnvelope<[DirNode]>.self, from: Data(text.utf8)))?.result ?? []
+    }
+
+    func readFile(_ path: String) async -> FileRead? {
+        let text = await rawFileRPC(op: "read_file", args: ["path": path])
+        return (try? JSONDecoder().decode(FileRPCEnvelope<FileRead>.self, from: Data(text.utf8)))?.result
+    }
+
+    func writeFile(path: String, content: String, baseMtimeMs: Double, baseSize: Int, baseHash: String) async -> WriteResult? {
+        let text = await rawFileRPC(op: "write_file", args: [
+            "path": path, "content": content,
+            "baseMtimeMs": baseMtimeMs, "baseSize": baseSize, "baseHash": baseHash,
+        ])
+        return (try? JSONDecoder().decode(FileRPCEnvelope<WriteResult>.self, from: Data(text.utf8)))?.result
+    }
+
     // MARK: - intern
 
     private func consumeEvents(of conn: SocketConnection, tofuFingerprint: String) {

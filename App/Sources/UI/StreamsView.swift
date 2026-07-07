@@ -17,6 +17,11 @@ struct StreamsView: View {
                 if let project = store.project {
                     Section("Projekt") {
                         Text("\(project.owner)/\(project.repo)").font(.headline)
+                        NavigationLink {
+                            FileBrowserView(session: session, path: project.repoRoot, title: "Dateien")
+                        } label: {
+                            Label("Dateien durchsuchen", systemImage: "folder")
+                        }
                     }
                 }
                 Section("Streams") {
