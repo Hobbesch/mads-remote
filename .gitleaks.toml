@@ -1,0 +1,17 @@
+# gitleaks-Konfiguration für mads Remote.
+# Default-Regelsatz + Allowlist bekannter False Positives. ECHTE Secrets
+# (Signing-Keys *.p8/*.p12, Provisioning-Profile, Tokens) liegen in gitignorten
+# Dateien und werden nie committet. Dieser Scan ist die fail-closed-Absicherung.
+title = "mads Remote gitleaks config"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Bekannte False Positives"
+paths = [
+  # Dokumentation nennt Beispiel-Fingerprints/Token-Formate (keine echten Secrets):
+  '''docs/.*\.md''',
+  # Beispiel-Env-Datei mit Platzhaltern:
+  '''\.env\.example''',
+]

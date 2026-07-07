@@ -1,0 +1,82 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# mads Remote — .gitignore
+# Ziel: keine Build-Artefakte, keine maschinenspezifischen Dateien und NIEMALS
+# Secrets/Signing-Material im Repo. Das Xcode-Projekt wird aus project.yml via
+# xcodegen GENERIERT → das .xcodeproj gehört NICHT ins Git (kein pbxproj-Merge-Hell).
+# ─────────────────────────────────────────────────────────────────────────────
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon?
+._*
+
+# ── Xcode ────────────────────────────────────────────────────────────────────
+# Generiertes Projekt (Quelle der Wahrheit ist project.yml)
+*.xcodeproj/
+*.xcworkspace/
+# ...aber shared scheme-Ordner erlauben, falls je manuell gepflegt:
+!*.xcodeproj/xcshareddata/
+!*.xcworkspace/xcshareddata/
+
+# Build-Output & Derived Data
+build/
+DerivedData/
+*.moved-aside
+*.hmap
+*.ipa
+*.dSYM.zip
+*.dSYM
+
+# User-spezifischer Xcode-State
+xcuserdata/
+*.xcuserstate
+*.xcscmblueprint
+*.perspectivev3
+
+# ── Swift Package Manager ────────────────────────────────────────────────────
+.build/
+.swiftpm/xcode/package.xcworkspace/
+.swiftpm/configuration/
+# Package.resolved WIRD eingecheckt (reproduzierbare Deps) → nicht ignorieren.
+
+# ── Signing / Provisioning / Secrets — NIEMALS committen ─────────────────────
+*.mobileprovision
+*.provisionprofile
+*.p12
+*.p8
+*.cer
+*.certSigningRequest
+*.pem
+*.key
+ExportOptions.plist
+# App-spezifische Konfiguration mit evtl. Geheimnissen:
+*.env
+.env
+.env.*
+!.env.example
+secrets.xcconfig
+Secrets.plist
+# fastlane
+fastlane/report.xml
+fastlane/Preview.html
+fastlane/screenshots/**/*.png
+fastlane/test_output
+fastlane/.env*
+
+# ── Node (nur falls CodeMirror/WKWebView-Assets gebaut werden) ───────────────
+node_modules/
+web/dist/
+npm-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ── Editor / Tooling ─────────────────────────────────────────────────────────
+.idea/
+*.swp
+.vscode/*
+!.vscode/extensions.json
+
+# ── Claude Code (maschinenspezifisch) ────────────────────────────────────────
+.claude/settings.local.json
