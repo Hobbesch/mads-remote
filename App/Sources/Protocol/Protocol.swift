@@ -5,7 +5,7 @@ import Foundation
 /// damit neue Protokoll-Nachrichten die App nicht brechen (Forward-Kompatibilität).
 enum SidecarMessage: Sendable {
     case projectResolved(ProjectInfo)
-    case statusUpdate(agentId: String, status: AgentStatus, currentStep: String?)
+    case statusUpdate(agentId: String, status: AgentStatus, currentStep: String?, label: String?, role: String?)
     case costUpdate(agentId: String, totalCostUsd: Double, numTurns: Int, inputTokens: Int?, outputTokens: Int?)
     case gitStatus(agentId: String, behind: Int, ahead: Int, dirty: Bool, syncBlocked: Bool?)
     case prUpdate(agentId: String, pr: PullRequestInfo?)
@@ -66,7 +66,7 @@ struct PermissionRequestInfo: Codable, Sendable, Hashable {
 private enum MsgKey: String, CodingKey {
     case type, agentId, status, currentStep, totalCostUsd, numTurns, inputTokens, outputTokens
     case behind, ahead, dirty, syncBlocked, pr, event, events, reason, message, subtype, isError
-    case scope, code, recoverable, project, requestId, toolName, kind
+    case scope, code, recoverable, project, requestId, toolName, kind, label, role
 }
 
 extension AgentEvent: Decodable {
@@ -108,7 +108,9 @@ extension SidecarMessage: Decodable {
             self = .statusUpdate(
                 agentId: try agentId(),
                 status: try c.decodeIfPresent(AgentStatus.self, forKey: .status) ?? .running,
-                currentStep: try c.decodeIfPresent(String.self, forKey: .currentStep))
+                currentStep: try c.decodeIfPresent(String.self, forKey: .currentStep),
+                label: try c.decodeIfPresent(String.self, forKey: .label),
+                role: try c.decodeIfPresent(String.self, forKey: .role))
         case "cost_update":
             self = .costUpdate(
                 agentId: try agentId(),

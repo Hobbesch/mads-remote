@@ -199,6 +199,24 @@ final class InstanceSession {
         return (try? JSONDecoder().decode(FileRPCEnvelope<[DirNode]>.self, from: Data(text.utf8)))?.result ?? []
     }
 
+    /// register_root + read_dir in EINEM Schritt, mit typisiertem Fehler (statt stummer leerer Liste).
+    /// So sieht der Datei-Browser den echten Grund (Root-Reg fehlgeschlagen / Pfad außerhalb /
+    /// Zeitüberschreitung), statt bei jedem Problem nur „Leer" zu zeigen.
+    enum DirLoad: Sendable { case ok([DirNode]); case failed(String) }
+
+    func loadDir(_ path: String) async -> DirLoad {
+        let regText = await rawFileRPC(op: "register_root", args: ["path": path])
+        if let env = try? JSONDecoder().decode(OkEnvelope.self, from: Data(regText.utf8)), !env.ok {
+            return .failed("register_root: \(env.error ?? "unbekannt")")
+        }
+        let text = await rawFileRPC(op: "read_dir", args: ["path": path])
+        guard let env = try? JSONDecoder().decode(FileRPCEnvelope<[DirNode]>.self, from: Data(text.utf8)) else {
+            return .failed("read_dir: ungültiges/kein Reply")
+        }
+        if env.ok { return .ok(env.result ?? []) }
+        return .failed("read_dir: \(env.error ?? "unbekannt")")
+    }
+
     func readFile(_ path: String) async -> FileRead? {
         let text = await rawFileRPC(op: "read_file", args: ["path": path])
         return (try? JSONDecoder().decode(FileRPCEnvelope<FileRead>.self, from: Data(text.utf8)))?.result

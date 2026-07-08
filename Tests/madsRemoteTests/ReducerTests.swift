@@ -6,7 +6,7 @@ import Testing
 struct ReducerTests {
     @Test func statusAndCostCreateAndPatchStream() {
         let store = InstanceStore()
-        store.apply(.statusUpdate(agentId: "a", status: .running, currentStep: "build"))
+        store.apply(.statusUpdate(agentId: "a", status: .running, currentStep: "build", label: "mein-stream", role: "sub"))
         store.apply(.costUpdate(agentId: "a", totalCostUsd: 1.5, numTurns: 3, inputTokens: 100, outputTokens: 50))
         #expect(store.order == ["a"])
         #expect(store.streams["a"]?.status == .running)
@@ -14,6 +14,8 @@ struct ReducerTests {
         #expect(store.streams["a"]?.costUsd == 1.5)
         #expect(store.streams["a"]?.numTurns == 3)
         #expect(store.streams["a"]?.inputTokens == 100)
+        #expect(store.streams["a"]?.label == "mein-stream")   // Name statt UUID
+        #expect(store.streams["a"]?.role == "sub")
     }
 
     @Test func gitAndPrUpdate() {
@@ -82,7 +84,7 @@ struct ReducerTests {
         let frame = #"{"v":1,"id":"x","ts":0,"channel":"event","msg":{"type":"status_update","agentId":"z","status":"waiting_input"}}"#
         let wf = WireFrame.decode(frame)
         #expect(wf?.channel == "event")
-        guard case .statusUpdate(let id, let status, _)? = wf?.msg else {
+        guard case .statusUpdate(let id, let status, _, _, _)? = wf?.msg else {
             Issue.record("kein statusUpdate decodiert"); return
         }
         #expect(id == "z")

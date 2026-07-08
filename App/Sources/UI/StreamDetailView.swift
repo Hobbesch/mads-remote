@@ -19,7 +19,7 @@ struct StreamDetailView: View {
             timeline
             composer
         }
-        .navigationTitle(streamId)
+        .navigationTitle(streamTitle)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar { ToolbarItem(placement: .topBarTrailing) { actionMenu } }
         .confirmationDialog("Pull Request erstellen?", isPresented: $confirmCreatePR, titleVisibility: .visible) {
@@ -49,6 +49,8 @@ struct StreamDetailView: View {
             }
         }
     }
+
+    private var streamTitle: String { stream?.label ?? streamId }
 
     private var composer: some View {
         HStack(spacing: 8) {

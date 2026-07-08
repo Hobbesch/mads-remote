@@ -3,6 +3,8 @@ import Observation
 /// Ein Stream (== mads-`AgentVM`), aus dem Event-/Snapshot-Strom abgeleitet.
 struct Stream: Identifiable, Sendable {
     let id: String
+    var label: String?          // menschlicher Name (mads-Label); Fallback: id
+    var role: String?           // "integrator" | "sub"
     var status: AgentStatus = .starting
     var currentStep: String?
     var costUsd: Double = 0
@@ -50,8 +52,13 @@ final class InstanceStore {
         switch msg {
         case .projectResolved(let info):
             project = info
-        case .statusUpdate(let id, let status, let step):
-            mutate(id) { $0.status = status; $0.currentStep = step }
+        case .statusUpdate(let id, let status, let step, let label, let role):
+            mutate(id) {
+                $0.status = status
+                $0.currentStep = step
+                if let label, !label.isEmpty { $0.label = label }   // nur überschreiben, wenn geliefert
+                if let role, !role.isEmpty { $0.role = role }
+            }
         case .costUpdate(let id, let cost, let turns, let inp, let out):
             mutate(id) {
                 $0.costUsd = cost

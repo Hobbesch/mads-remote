@@ -51,7 +51,14 @@ private struct StreamRow: View {
         VStack(alignment: .leading, spacing: 3) {
             HStack {
                 StatusDot(status: stream.status)
-                Text(stream.id).font(.subheadline).bold()
+                Text(stream.label ?? stream.id).font(.subheadline).bold().lineLimit(1)
+                if let role = stream.role {
+                    Text(role == "integrator" ? "INTEGRATOR" : "SUB")
+                        .font(.caption2).bold()
+                        .padding(.horizontal, 5).padding(.vertical, 1)
+                        .background(Color.secondary.opacity(0.15), in: Capsule())
+                        .foregroundStyle(.secondary)
+                }
                 Spacer()
                 if stream.costUsd > 0 {
                     Text(String(format: "$%.2f", stream.costUsd)).font(.caption).foregroundStyle(.secondary)

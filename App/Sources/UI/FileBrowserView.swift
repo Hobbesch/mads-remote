@@ -10,11 +10,20 @@ struct FileBrowserView: View {
 
     @State private var nodes: [DirNode] = []
     @State private var loading = true
+    @State private var errorText: String?
 
     var body: some View {
         List {
             if loading {
                 HStack { Spacer(); ProgressView(); Spacer() }
+            } else if let errorText {
+                VStack(alignment: .leading, spacing: 6) {
+                    Label("Dateizugriff fehlgeschlagen", systemImage: "exclamationmark.triangle")
+                        .font(.subheadline).foregroundStyle(.orange)
+                    Text(errorText).font(.caption).foregroundStyle(.secondary)
+                    Text(path).font(.caption2).monospaced().foregroundStyle(.tertiary)
+                    Button("Erneut versuchen") { Task { await load() } }
+                }
             } else if nodes.isEmpty {
                 Text("Leer").foregroundStyle(.secondary)
             }
@@ -24,11 +33,17 @@ struct FileBrowserView: View {
         }
         .navigationTitle(title)
         .navigationBarTitleDisplayMode(.inline)
-        .task {
-            _ = await session.registerRoot(path)
-            nodes = await session.readDir(path)
-            loading = false
+        .task { await load() }
+    }
+
+    private func load() async {
+        loading = true
+        errorText = nil
+        switch await session.loadDir(path) {
+        case .ok(let n): nodes = n
+        case .failed(let e): errorText = e
         }
+        loading = false
     }
 
     @ViewBuilder
