@@ -65,6 +65,12 @@ final class InstanceStore {
             mutate(id) { $0.pr = pr }
         case .agentEvent(let id, let event):
             applyAgentEvent(id, event)
+        case .agentTimeline(let id, let events):
+            // Snapshot-Replay: Timeline dieses Agenten aus dem Verlauf NEU aufbauen (Basis leeren,
+            // dann in Reihenfolge anwenden — tool_result trifft so die im Replay erzeugte Karte).
+            // Idempotent: spätere Live-Events hängen strikt danach an (kein Duplikat).
+            mutate(id) { $0.timeline = [] }
+            for event in events { applyAgentEvent(id, event) }
         case .agentDone(let id, _, let isError):
             mutate(id) { $0.status = isError ? .error : .done }
         case .needsInput(let id, _, _):

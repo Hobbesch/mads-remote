@@ -10,6 +10,7 @@ enum SidecarMessage: Sendable {
     case gitStatus(agentId: String, behind: Int, ahead: Int, dirty: Bool, syncBlocked: Bool?)
     case prUpdate(agentId: String, pr: PullRequestInfo?)
     case agentEvent(agentId: String, event: AgentEvent)
+    case agentTimeline(agentId: String, events: [AgentEvent])
     case needsInput(agentId: String, reason: String, message: String?)
     case permissionRequest(PermissionRequestInfo)
     case agentDone(agentId: String, subtype: String, isError: Bool)
@@ -64,7 +65,7 @@ struct PermissionRequestInfo: Codable, Sendable, Hashable {
 
 private enum MsgKey: String, CodingKey {
     case type, agentId, status, currentStep, totalCostUsd, numTurns, inputTokens, outputTokens
-    case behind, ahead, dirty, syncBlocked, pr, event, reason, message, subtype, isError
+    case behind, ahead, dirty, syncBlocked, pr, event, events, reason, message, subtype, isError
     case scope, code, recoverable, project, requestId, toolName, kind
 }
 
@@ -126,6 +127,10 @@ extension SidecarMessage: Decodable {
             self = .prUpdate(agentId: try agentId(), pr: try c.decodeIfPresent(PullRequestInfo.self, forKey: .pr))
         case "agent_event":
             self = .agentEvent(agentId: try agentId(), event: try c.decode(AgentEvent.self, forKey: .event))
+        case "agent_timeline":
+            self = .agentTimeline(
+                agentId: try agentId(),
+                events: try c.decodeIfPresent([AgentEvent].self, forKey: .events) ?? [])
         case "needs_input":
             self = .needsInput(
                 agentId: try agentId(),

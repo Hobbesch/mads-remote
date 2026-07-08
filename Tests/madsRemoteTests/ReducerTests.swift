@@ -43,6 +43,41 @@ struct ReducerTests {
         #expect(store.streams["a"]?.timeline.count == 800)
     }
 
+    @Test func agentTimelineRebuildsAndIsIdempotent() {
+        let store = InstanceStore()
+        // Client verbindet mitten im Lauf: nur eine erste Live-Zeile ist angekommen …
+        store.apply(.agentEvent(agentId: "a", event: .assistantText("erste Zeile")))
+        // … dann kommt der Snapshot mit dem VOLLEN Verlauf (inkl. bereits gelaufenem Bash).
+        store.apply(.agentTimeline(agentId: "a", events: [
+            .assistantText("erste Zeile"),
+            .toolUse(toolUseId: "t1", name: "Bash"),
+            .toolResult(toolUseId: "t1", ok: true, summary: nil),
+            .assistantText("zweite Zeile"),
+        ]))
+        var tl = store.streams["a"]?.timeline ?? []
+        #expect(tl.count == 3) // text + tool(ok) + text — KEIN Duplikat der ersten Zeile
+        if case .tool(_, let name, let ok)? = tl.dropFirst().first?.kind {
+            #expect(name == "Bash"); #expect(ok == true)
+        } else { Issue.record("Bash-Karte fehlt/kein ok") }
+        // Live-Event NACH dem Snapshot hängt strikt an.
+        store.apply(.agentEvent(agentId: "a", event: .assistantText("dritte Zeile")))
+        tl = store.streams["a"]?.timeline ?? []
+        #expect(tl.count == 4)
+        // Zweiter Snapshot (z. B. nach Reconnect) ERSETZT, ohne zu duplizieren.
+        store.apply(.agentTimeline(agentId: "a", events: [.assistantText("nur noch das")]))
+        #expect(store.streams["a"]?.timeline.count == 1)
+    }
+
+    @Test func decodesAgentTimelineFrame() {
+        let frame = #"{"channel":"event","msg":{"type":"agent_timeline","agentId":"a","events":[{"kind":"assistant_text","text":"hi"},{"kind":"tool_use","toolUseId":"t1","name":"Bash","input":{}}]}}"#
+        let wf = WireFrame.decode(frame)
+        guard case .agentTimeline(let id, let events)? = wf?.msg else {
+            Issue.record("kein agentTimeline decodiert"); return
+        }
+        #expect(id == "a")
+        #expect(events.count == 2)
+    }
+
     @Test func decodesEventFrameAndApplies() {
         let frame = #"{"v":1,"id":"x","ts":0,"channel":"event","msg":{"type":"status_update","agentId":"z","status":"waiting_input"}}"#
         let wf = WireFrame.decode(frame)
