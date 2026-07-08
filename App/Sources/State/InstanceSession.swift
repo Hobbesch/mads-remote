@@ -28,7 +28,16 @@ final class InstanceSession {
         switch phase { case .idle, .failed: break; default: return }
         phase = .resolving
 
-        guard let (host, port) = await BonjourResolver.resolve(instance.endpoint) else {
+        // Bevorzugt die im TXT annoncierte LAN-IP (deterministisch, keine Zone) — die fragile
+        // Bonjour-Auflösung liefert auf einem USB-verbundenen iPad die unbrauchbare link-local
+        // Adresse. Fallback: doch auflösen, falls kein addr/port im TXT stand.
+        let resolved: (host: String, port: UInt16)?
+        if let directHost = instance.directHost, let directPort = instance.directPort {
+            resolved = (host: directHost, port: directPort)
+        } else {
+            resolved = await BonjourResolver.resolve(instance.endpoint)
+        }
+        guard let (host, port) = resolved else {
             phase = .failed("Instanz nicht erreichbar"); return
         }
         // Gepinnter fp (Keychain, autoritativ) oder beim ersten Pairing der TXT-Hinweis (TOFU).

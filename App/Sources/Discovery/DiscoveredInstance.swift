@@ -9,6 +9,8 @@ struct DiscoveredInstance: Identifiable, Hashable, Sendable {
     let pid: String?          // TXT "pid"
     let protocolVersion: String?  // TXT "pv"
     let fingerprint: String?      // TXT "fp" = SPKI-Pin (nur Hinweis; autoritativ ist der gepinnte fp)
+    let directHost: String?   // TXT "addr" = annoncierte LAN-IP (umgeht die fragile Auflösung)
+    let directPort: UInt16?   // TXT "port"
     let endpoint: NWEndpoint
 
     init?(result: NWBrowser.Result) {
@@ -24,6 +26,8 @@ struct DiscoveredInstance: Identifiable, Hashable, Sendable {
         self.pid = f.pid
         self.protocolVersion = f.pv
         self.fingerprint = f.fp
+        self.directHost = txt["addr"].flatMap { $0.isEmpty ? nil : $0 }
+        self.directPort = txt["port"].flatMap { UInt16($0) }
         self.endpoint = result.endpoint
     }
 
@@ -47,6 +51,8 @@ extension DiscoveredInstance {
         self.pid = nil
         self.protocolVersion = nil
         self.fingerprint = fingerprint
+        self.directHost = nil
+        self.directPort = nil
         self.endpoint = .hostPort(host: "127.0.0.1", port: 1)
     }
 }
