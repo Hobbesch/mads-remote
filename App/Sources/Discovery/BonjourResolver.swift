@@ -15,7 +15,11 @@ enum BonjourResolver {
 
     static func resolve(_ endpoint: NWEndpoint) async -> (host: String, port: UInt16)? {
         await withCheckedContinuation { (cont: CheckedContinuation<(host: String, port: UInt16)?, Never>) in
-            let conn = NWConnection(to: endpoint, using: .tcp)
+            // WLAN erzwingen: sonst löst ein per USB angeschlossenes iPad zur link-local USB-Adresse
+            // (169.254.x.x%enX) auf statt zur sauberen LAN/WLAN-IP. mads ist ein WLAN-Companion (§9).
+            let params = NWParameters.tcp
+            params.requiredInterfaceType = .wifi
+            let conn = NWConnection(to: endpoint, using: params)
             let guardOnce = OnceGuard()
 
             let finish: @Sendable ((host: String, port: UInt16)?) -> Void = { value in

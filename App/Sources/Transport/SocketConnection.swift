@@ -25,8 +25,12 @@ actor SocketConnection {
     /// Timeout-Tasks je Request — bei Reply gecancelt, damit kein `Task.sleep` liegen bleibt.
     private var timeouts: [String: Task<Void, Never>] = [:]
 
-    init(host: String, port: UInt16, pinnedFingerprintHex: String, store: InstanceStore) {
-        self.url = URL(string: "wss://\(host):\(port)/")!
+    init?(host: String, port: UInt16, pinnedFingerprintHex: String, store: InstanceStore) {
+        // Zone-ID (link-local, z. B. "169.254.x.x%en3" oder IPv6 "fe80::…%en0") prozentkodieren —
+        // ein rohes % ist keine gültige URL-Kodierung, `URL(string:)` gäbe sonst nil zurück.
+        let encodedHost = host.replacingOccurrences(of: "%", with: "%25")
+        guard let url = URL(string: "wss://\(encodedHost):\(port)/") else { return nil }
+        self.url = url
         self.store = store
         self.delegate = PinningDelegate(pinnedFingerprintHex: pinnedFingerprintHex)
         self.session = URLSession(configuration: .ephemeral, delegate: delegate, delegateQueue: nil)

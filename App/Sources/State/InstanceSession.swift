@@ -36,7 +36,10 @@ final class InstanceSession {
             phase = .failed("Kein Server-Fingerprint verfügbar"); return
         }
 
-        let conn = SocketConnection(host: host, port: port, pinnedFingerprintHex: fp, store: store)
+        guard let conn = SocketConnection(host: host, port: port, pinnedFingerprintHex: fp, store: store) else {
+            phase = .failed("Ungültige Server-Adresse (\(host):\(port))")
+            return
+        }
         connection = conn
         consumeEvents(of: conn, tofuFingerprint: fp)
         await conn.connect()
