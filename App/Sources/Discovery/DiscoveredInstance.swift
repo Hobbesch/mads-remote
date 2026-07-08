@@ -20,7 +20,9 @@ struct DiscoveredInstance: Identifiable, Hashable, Sendable {
             txt = record.dictionary
         }
         let f = DiscoveredInstance.fields(txt: txt, serviceName: serviceName)
-        self.id = serviceName
+        // Stabile Identität = SPKI-Fingerprint (überlebt mads-Neustarts; der Service-Name mads-<pid>
+        // ändert sich bei jedem Neustart → sonst Doppel-Einträge + erneutes Pairing). Fallback: Name.
+        self.id = f.fp ?? serviceName
         self.name = f.name
         self.project = f.project
         self.pid = f.pid
