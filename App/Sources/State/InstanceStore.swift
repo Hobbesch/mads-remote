@@ -24,6 +24,7 @@ struct TimelineItem: Identifiable, Sendable {
     let id: Int
     var kind: Kind
     enum Kind: Sendable {
+        case user(String)        // eigene, von der App gesendete Nachricht
         case assistant(String)
         case thinking(String)
         case tool(id: String, name: String, ok: Bool?)
@@ -109,6 +110,12 @@ final class InstanceStore {
     /// Einen (Sende-)Fehler für die UI vermerken.
     func noteError(_ message: String) {
         lastError = message
+    }
+
+    /// Eine von der App gesendete Nachricht optimistisch in die Timeline eintragen — der Sidecar
+    /// emittiert dafür (noch) kein Event, und mads trägt eigene Nachrichten ebenfalls lokal ein.
+    func addSentMessage(agentId: String, text: String) {
+        pushTimeline(agentId, .user(text))
     }
 
     // MARK: - intern

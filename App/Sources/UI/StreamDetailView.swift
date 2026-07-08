@@ -131,15 +131,27 @@ private struct TimelineItemView: View {
     let item: TimelineItem
 
     var body: some View {
-        HStack(alignment: .top, spacing: 8) {
-            Circle().fill(dotColor).frame(width: 7, height: 7).padding(.top, 6)
-            content
-            Spacer(minLength: 0)
+        if case .user(let text) = item.kind {
+            // Eigene Nachricht: rechtsbündige Akzent-Blase (wie ein gesendeter Chat-Eintrag).
+            HStack {
+                Spacer(minLength: 32)
+                Text(markdown(text))
+                    .padding(.horizontal, 12).padding(.vertical, 8)
+                    .background(Color.accentColor, in: RoundedRectangle(cornerRadius: 14))
+                    .foregroundStyle(.white)
+            }
+        } else {
+            HStack(alignment: .top, spacing: 8) {
+                Circle().fill(dotColor).frame(width: 7, height: 7).padding(.top, 6)
+                content
+                Spacer(minLength: 0)
+            }
         }
     }
 
     @ViewBuilder private var content: some View {
         switch item.kind {
+        case .user: EmptyView() // oben separat gerendert
         case .assistant(let text):
             Text(markdown(text)) // Markdown wie in mads (fett/kursiv/Code/Links)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -158,7 +170,7 @@ private struct TimelineItemView: View {
     /// Status-Punkt-Farbe (mads `tl-dot`): dim für Text/Thinking/Notice, grün/rot/orange für Tools.
     private var dotColor: Color {
         switch item.kind {
-        case .assistant, .thinking, .notice:
+        case .user, .assistant, .thinking, .notice:
             return Color.secondary.opacity(0.5)
         case .tool(_, _, let ok):
             switch ok {
