@@ -76,6 +76,24 @@ final class InstanceSession {
         phase = .idle
     }
 
+    /// Beim Zurückkehren in den Vordergrund neu verbinden — iOS suspendiert den WebSocket im
+    /// Hintergrund (§8.5). `start()` re-authentifiziert mit dem gespeicherten Token (kein erneutes
+    /// Pairing) und holt via request_snapshot den frischen Stand. Läuft NUR, wenn wir zuvor
+    /// verbunden/gescheitert waren — ein laufender Verbindungs-/Pairing-Vorgang wird nicht gestört.
+    func reconnect() async {
+        switch phase {
+        case .live, .failed:
+            eventTask?.cancel()
+            eventTask = nil
+            await connection?.disconnect()
+            connection = nil
+            phase = .idle
+            await start()
+        default:
+            break
+        }
+    }
+
     // MARK: - Command-Plane (P3.1) — die App fernsteuert
 
     /// Sendet einen command-Frame. `true` = auf den Socket geschrieben (kein Wurf). KEIN echtes Ack

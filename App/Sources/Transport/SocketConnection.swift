@@ -104,7 +104,8 @@ actor SocketConnection {
                 }
             } catch {
                 // Deckt auch den Pin-Mismatch ab (TLS-Trust-Abbruch → receive() wirft).
-                eventsCont.yield(.failed(String(describing: error)))
+                // URL mit ausgeben → Diagnose: nutzt die App die TXT-IP oder die link-local Adresse?
+                eventsCont.yield(.failed("[\(url.absoluteString)] \(error)"))
                 failAllPending() // offene file-rpc-Requests sofort scheitern lassen (nicht 10 s hängen)
                 eventsCont.finish()
                 return

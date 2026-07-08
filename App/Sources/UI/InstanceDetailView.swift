@@ -4,6 +4,7 @@ import SwiftUI
 /// (Verbinden → Pairing → Live-Streams → Fehler). Das ist der erste end-to-end-Flow.
 struct InstanceDetailView: View {
     @State private var session: InstanceSession
+    @Environment(\.scenePhase) private var scenePhase
 
     init(instance: DiscoveredInstance) {
         _session = State(initialValue: InstanceSession(instance: instance))
@@ -32,5 +33,9 @@ struct InstanceDetailView: View {
         .navigationBarTitleDisplayMode(.inline)
         .task { await session.start() }
         .onDisappear { Task { await session.disconnect() } }
+        .onChange(of: scenePhase) { _, newPhase in
+            // Vordergrund → neu verbinden (iOS hat den WS im Hintergrund gekappt, §8.5).
+            if newPhase == .active { Task { await session.reconnect() } }
+        }
     }
 }
