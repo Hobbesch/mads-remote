@@ -26,4 +26,40 @@ struct DiscoveryTests {
         #expect(f.name == "mads-1")
         #expect(f.project == "p")
     }
+
+    // MARK: - Dedup per Fingerprint (Karteileichen-Sammlung nach Neustarts)
+
+    @Test func dedupesByFingerprintPreferringStableName() {
+        let fp = String(repeating: "a", count: 64)
+        let stale = DiscoveredInstance(testId: fp, name: "mads", project: "p", fingerprint: fp, serviceName: "mads-55873")
+        let live = DiscoveredInstance(testId: fp, name: "mads", project: "p", fingerprint: fp, serviceName: "mads-\(fp.prefix(12))")
+        // Reihenfolge egal: der fp-benannte (lebende) gewinnt.
+        for input in [[stale, live], [live, stale]] {
+            let out = DiscoveredInstance.dedupePreferringLive(input)
+            #expect(out.count == 1)
+            #expect(out.first?.serviceName == "mads-\(fp.prefix(12))")
+        }
+    }
+
+    @Test func dedupeKeepsDistinctFingerprintsSeparate() {
+        let a = DiscoveredInstance(testId: "fpA", name: "A", project: "p", fingerprint: "fpA", serviceName: "mads-1")
+        let b = DiscoveredInstance(testId: "fpB", name: "B", project: "p", fingerprint: "fpB", serviceName: "mads-2")
+        #expect(DiscoveredInstance.dedupePreferringLive([a, b]).count == 2)
+    }
+
+    @Test func dedupeFallsBackToFirstWhenNoStableName() {
+        let fp = String(repeating: "b", count: 64)
+        let a = DiscoveredInstance(testId: fp, name: "mads", project: "p", fingerprint: fp, serviceName: "mads-111")
+        let b = DiscoveredInstance(testId: fp, name: "mads", project: "p", fingerprint: fp, serviceName: "mads-222")
+        let out = DiscoveredInstance.dedupePreferringLive([a, b])
+        #expect(out.count == 1) // beide pid-benannt → einer bleibt (kein Absturz/Doppel)
+    }
+
+    @Test func isFingerprintNamedMatchesScheme() {
+        let fp = String(repeating: "c", count: 64)
+        let live = DiscoveredInstance(testId: fp, name: "m", project: "p", fingerprint: fp, serviceName: "mads-\(fp.prefix(12))")
+        let old = DiscoveredInstance(testId: fp, name: "m", project: "p", fingerprint: fp, serviceName: "mads-4242")
+        #expect(live.isFingerprintNamed)
+        #expect(!old.isFingerprintNamed)
+    }
 }

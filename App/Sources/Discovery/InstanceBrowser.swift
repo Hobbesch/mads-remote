@@ -21,11 +21,13 @@ final class InstanceBrowser {
         self.browser = browser
 
         browser.browseResultsChangedHandler = { [weak self] results, _ in
-            // Handler läuft auf der Browser-Queue → geparst und auf den MainActor gehoben.
-            let parsed = results
-                .compactMap(DiscoveredInstance.init(result:))
+            // Handler läuft auf der Browser-Queue → geparst, per Fingerprint entdoppelt (mehrere
+            // Bonjour-Einträge derselben Instanz nach Neustarts → ein Eintrag) und auf den MainActor
+            // gehoben.
+            let parsed = results.compactMap(DiscoveredInstance.init(result:))
+            let deduped = DiscoveredInstance.dedupePreferringLive(parsed)
                 .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
-            Task { @MainActor [weak self] in self?.instances = parsed }
+            Task { @MainActor [weak self] in self?.instances = deduped }
         }
         browser.stateUpdateHandler = { [weak self] state in
             Task { @MainActor [weak self] in

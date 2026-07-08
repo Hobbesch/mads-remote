@@ -5,11 +5,22 @@ import Security
 /// nie; häufiger „Pinning greift nicht"-Bug). Matcht der Server-Leaf-SPKI nicht den gepinnten fp,
 /// wird die Verbindung HART abgebrochen (kein „trust on mismatch").
 /// `@unchecked Sendable`: einziger Zustand ist ein immutabler String.
-final class PinningDelegate: NSObject, URLSessionDelegate, @unchecked Sendable {
+final class PinningDelegate: NSObject, URLSessionWebSocketDelegate, @unchecked Sendable {
     private let pinnedFingerprintHex: String
+    /// Feuert bei `didOpenWithProtocol` — der WS-Handshake (nach bestandenem Pinning) steht.
+    private let onOpen: @Sendable () -> Void
 
-    init(pinnedFingerprintHex: String) {
+    init(pinnedFingerprintHex: String, onOpen: @escaping @Sendable () -> Void) {
         self.pinnedFingerprintHex = pinnedFingerprintHex
+        self.onOpen = onOpen
+    }
+
+    func urlSession(
+        _ session: URLSession,
+        webSocketTask: URLSessionWebSocketTask,
+        didOpenWithProtocol protocol: String?
+    ) {
+        onOpen()
     }
 
     func urlSession(

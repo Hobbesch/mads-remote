@@ -11,6 +11,7 @@ struct DiscoveredInstance: Identifiable, Hashable, Sendable {
     let fingerprint: String?      // TXT "fp" = SPKI-Pin (nur Hinweis; autoritativ ist der gepinnte fp)
     let directHost: String?   // TXT "addr" = annoncierte LAN-IP (umgeht die fragile Auflösung)
     let directPort: UInt16?   // TXT "port"
+    let serviceName: String   // roher Bonjour-Instanzname ("mads-<fp12>" neu / "mads-<pid>" alt)
     let endpoint: NWEndpoint
 
     init?(result: NWBrowser.Result) {
@@ -30,7 +31,28 @@ struct DiscoveredInstance: Identifiable, Hashable, Sendable {
         self.fingerprint = f.fp
         self.directHost = txt["addr"].flatMap { $0.isEmpty ? nil : $0 }
         self.directPort = txt["port"].flatMap { UInt16($0) }
+        self.serviceName = serviceName
         self.endpoint = result.endpoint
+    }
+
+    /// Servicename folgt dem stabilen fp-Schema `mads-<fp[0..<12]>` (aktuelle mads-Version)?
+    /// So lässt sich der LEBENDE Eintrag von veralteten pid-benannten Karteileichen unterscheiden.
+    var isFingerprintNamed: Bool {
+        guard let fp = fingerprint, fp.count >= 12 else { return false }
+        return serviceName == "mads-\(fp.prefix(12))"
+    }
+
+    /// Mehrere Bonjour-Einträge derselben Instanz (gleicher Fingerprint = gleiche `id`) zu EINEM
+    /// entdoppeln. Bevorzugt den fp-benannten (lebenden) Eintrag; so verschwinden veraltete
+    /// pid-benannte Karteileichen mit totem Port aus der Liste, sobald der lebende sichtbar ist.
+    static func dedupePreferringLive(_ items: [DiscoveredInstance]) -> [DiscoveredInstance] {
+        var byId: [String: DiscoveredInstance] = [:]
+        for item in items {
+            guard let existing = byId[item.id] else { byId[item.id] = item; continue }
+            // Ersetzen nur, wenn der neue fp-benannt ist und der bestehende nicht (sonst stabil halten).
+            if item.isFingerprintNamed && !existing.isFingerprintNamed { byId[item.id] = item }
+        }
+        return Array(byId.values)
     }
 
     /// Pure TXT→Felder-Abbildung — von `NWBrowser` entkoppelt und damit unit-testbar.
@@ -46,7 +68,7 @@ struct DiscoveredInstance: Identifiable, Hashable, Sendable {
 #if DEBUG
 extension DiscoveredInstance {
     /// Nur für Tests: konstruiert eine Instanz ohne `NWBrowser.Result`.
-    init(testId: String, name: String, project: String, fingerprint: String?) {
+    init(testId: String, name: String, project: String, fingerprint: String?, serviceName: String? = nil) {
         self.id = testId
         self.name = name
         self.project = project
@@ -55,6 +77,7 @@ extension DiscoveredInstance {
         self.fingerprint = fingerprint
         self.directHost = nil
         self.directPort = nil
+        self.serviceName = serviceName ?? testId
         self.endpoint = .hostPort(host: "127.0.0.1", port: 1)
     }
 }

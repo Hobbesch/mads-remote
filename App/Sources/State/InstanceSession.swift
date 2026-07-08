@@ -20,6 +20,11 @@ final class InstanceSession {
 
     private var connection: SocketConnection?
     private var eventTask: Task<Void, Never>?
+    /// Watchdog für JEDE `.connecting`-Phase (Verbindungsaufbau, Auth-Antwort, Pairing-Antwort):
+    /// bleibt eine dieser Runden > 8 s ohne Ergebnis (z. B. Server nimmt WS an, antwortet aber nie),
+    /// wird sauber gescheitert statt ewig im „Verbinde …"-Spinner zu hängen. Bei jedem Übergang in
+    /// einen Ruhezustand (.live/.needsPairing/.failed) gecancelt.
+    private var watchdog: Task<Void, Never>?
 
     init(instance: DiscoveredInstance) { self.instance = instance }
 
@@ -51,24 +56,43 @@ final class InstanceSession {
         }
         connection = conn
         consumeEvents(of: conn, tofuFingerprint: fp)
+        phase = .connecting            // Spinner bis `.connected` (didOpen) ODER Watchdog
         await conn.connect()
+        armWatchdog()
+    }
 
-        if let token = KeychainStore.token(instanceId: instance.id) {
-            phase = .connecting
-            try? await conn.authenticate(token: token)
-        } else {
-            phase = .needsPairing
+    /// Frischen 8-s-Watchdog für die laufende `.connecting`-Runde bewaffnen (Aufbau/Auth/Pairing).
+    /// Feuert nur, wenn wir dann NOCH `.connecting` sind — jeder Übergang in einen Ruhezustand
+    /// cancelt ihn. Deckt den toten Endpunkt (Stealth-Firewall schickt kein RST → sonst 60-s-Hänger)
+    /// ebenso wie einen Server ab, der den WS annimmt, aber nie auf `auth`/`pair` antwortet.
+    private func armWatchdog() {
+        watchdog?.cancel()
+        watchdog = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(8))
+            guard !Task.isCancelled else { return }
+            await self?.watchdogFired()
         }
+    }
+
+    private func cancelWatchdog() { watchdog?.cancel(); watchdog = nil }
+
+    private func watchdogFired() async {
+        guard phase == .connecting else { return }   // schon verbunden/gescheitert → nichts tun
+        eventTask?.cancel(); eventTask = nil
+        await connection?.disconnect(); connection = nil
+        phase = .failed("Zeitüberschreitung – die Instanz antwortet nicht (evtl. veralteter Eintrag). Erneut versuchen oder in mads neu koppeln.")
     }
 
     /// PIN einlösen (manuelle Eingabe oder aus einem gescannten QR).
     func submitPin(_ pin: String) async {
         guard let conn = connection else { return }
         phase = .connecting
+        armWatchdog()                 // Pairing-Antwort muss in 8 s kommen — sonst kein ewiger Spinner
         try? await conn.pair(pin: pin, name: Self.deviceName)
     }
 
     func disconnect() async {
+        cancelWatchdog()
         eventTask?.cancel()
         eventTask = nil
         await connection?.disconnect()
@@ -83,6 +107,7 @@ final class InstanceSession {
     func reconnect() async {
         switch phase {
         case .live, .failed:
+            cancelWatchdog()
             eventTask?.cancel()
             eventTask = nil
             await connection?.disconnect()
@@ -199,15 +224,27 @@ final class InstanceSession {
 
     private func handle(_ event: ConnectionEvent, tofuFingerprint: String) async {
         switch event {
+        case .connected:
+            // Verbindung steht WIRKLICH → jetzt erst Auth (Token vorhanden) oder Pairing anzeigen.
+            if let token = KeychainStore.token(instanceId: instance.id) {
+                armWatchdog()                                       // Auth-Antwort in 8 s absichern
+                try? await connection?.authenticate(token: token)   // bleibt .connecting bis .authenticated
+            } else {
+                cancelWatchdog()                                    // Ruhezustand: wartet auf Nutzer-PIN
+                phase = .needsPairing
+            }
         case .paired(let token, _):
             // Beim ersten Pairing den (TOFU-)fp mit dem Token pinnen.
+            cancelWatchdog()
             KeychainStore.saveCredentials(instanceId: instance.id, token: token, fingerprint: tofuFingerprint)
             await requestSnapshot()
             phase = .live
         case .authenticated:
+            cancelWatchdog()
             await requestSnapshot()
             phase = .live
         case .pairRejected(let reason), .failed(let reason):
+            cancelWatchdog()
             phase = .failed(reason)
         }
     }

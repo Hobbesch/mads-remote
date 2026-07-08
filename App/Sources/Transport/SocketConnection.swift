@@ -2,6 +2,8 @@ import Foundation
 
 /// Ereignisse aus dem Receive-Loop, die die Session (InstanceSession) braucht (Token speichern etc.).
 enum ConnectionEvent: Sendable {
+    /// WS-Handshake steht wirklich (`didOpenWithProtocol`) — erst jetzt Auth/Pairing anstoßen.
+    case connected
     case authenticated(deviceId: String)
     case paired(token: String, deviceId: String)
     case pairRejected(String)
@@ -32,9 +34,15 @@ actor SocketConnection {
         guard let url = URL(string: "wss://\(encodedHost):\(port)/") else { return nil }
         self.url = url
         self.store = store
-        self.delegate = PinningDelegate(pinnedFingerprintHex: pinnedFingerprintHex)
+        // Stream ZUERST bauen — der Pinning-Delegate meldet `didOpen` (echte Verbindung steht)
+        // darüber, damit die Session Pairing/Auth nicht optimistisch VOR dem Handshake anzeigt.
+        let (events, eventsCont) = AsyncStream<ConnectionEvent>.makeStream()
+        self.events = events
+        self.eventsCont = eventsCont
+        self.delegate = PinningDelegate(pinnedFingerprintHex: pinnedFingerprintHex) {
+            eventsCont.yield(.connected)
+        }
         self.session = URLSession(configuration: .ephemeral, delegate: delegate, delegateQueue: nil)
-        (self.events, self.eventsCont) = AsyncStream.makeStream()
     }
 
     func connect() {
