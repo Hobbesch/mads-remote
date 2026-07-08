@@ -233,8 +233,12 @@ final class InstanceSession {
     // MARK: - intern
 
     private func consumeEvents(of conn: SocketConnection, tofuFingerprint: String) {
+        // NUR den Event-Stream capturen, NICHT `conn` — sonst hielte der Task die Verbindung am Leben
+        // (Retain-Cycle) und sie schlösse beim Verlassen der Instanz nie. So dealloziert die
+        // Verbindung beim Pop → deinit schließt die URLSession sauber.
+        let events = conn.events
         eventTask = Task { [weak self] in
-            for await event in conn.events {
+            for await event in events {
                 await self?.handle(event, tofuFingerprint: tofuFingerprint)
             }
         }

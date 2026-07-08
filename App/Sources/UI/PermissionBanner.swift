@@ -4,9 +4,16 @@ import SwiftUI
 /// einen expliziten Tap auf Erlauben/Ablehnen beantwortet — nie automatisch (§6 P3#16).
 struct PermissionBanner: View {
     let session: InstanceSession
+    /// nil = alle Streams (Übersicht); sonst nur die Anfragen DIESES Streams (Detail-Ansicht).
+    var agentId: String? = nil
+
+    private var requests: [PermissionRequestInfo] {
+        let all = session.store.permissions
+        return agentId == nil ? all : all.filter { $0.agentId == agentId }
+    }
 
     var body: some View {
-        ForEach(session.store.permissions, id: \.requestId) { req in
+        ForEach(requests, id: \.requestId) { req in
             VStack(alignment: .leading, spacing: 8) {
                 Label("Berechtigung angefragt", systemImage: "exclamationmark.shield.fill")
                     .font(.subheadline).bold()

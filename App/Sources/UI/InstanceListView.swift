@@ -10,7 +10,7 @@ struct InstanceListView: View {
                 ContentUnavailableView {
                     Label("Keine mads-Instanz gefunden", systemImage: "antenna.radiowaves.left.and.right.slash")
                 } description: {
-                    Text("Starte mads mit MADS_REMOTE_BRIDGE=1 im selben WLAN.")
+                    Text("In mads (im selben WLAN): Einstellungen → Remote aktivieren.")
                 }
             } else {
                 ForEach(browser.instances) { instance in

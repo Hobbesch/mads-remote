@@ -32,7 +32,10 @@ struct InstanceDetailView: View {
         .navigationTitle(session.instance.name)
         .navigationBarTitleDisplayMode(.inline)
         .task { await session.start() }
-        .onDisappear { Task { await session.disconnect() } }
+        // KEIN `onDisappear { disconnect }` — das feuerte im NavigationStack auch beim PUSH eines
+        // Streams (StreamDetailView) und kappte die Verbindung → keine Live-Events im Detail. Die
+        // Verbindung bleibt jetzt übers interne Navigieren offen; beim VERLASSEN der Instanz (Pop)
+        // dealloziert die Session → SocketConnection.deinit schließt die URLSession sauber.
         .onChange(of: scenePhase) { _, newPhase in
             // Vordergrund → neu verbinden (iOS hat den WS im Hintergrund gekappt, §8.5).
             if newPhase == .active { Task { await session.reconnect() } }

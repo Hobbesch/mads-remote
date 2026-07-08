@@ -45,6 +45,16 @@ actor SocketConnection {
         self.session = URLSession(configuration: .ephemeral, delegate: delegate, delegateQueue: nil)
     }
 
+    /// Finaler Teardown, wenn die Verbindung dealloziert wird (Instanz verlassen / Pop): URLSession
+    /// invalidieren → WS schließen + Event-Stream beenden. Greift zuverlässig, weil der eventTask
+    /// jetzt den STREAM (nicht die Verbindung) hält → kein Retain-Cycle, der die Verbindung am Leben
+    /// hielte. So braucht es KEIN aggressives `onDisappear { disconnect }` mehr (das beim internen
+    /// Navigieren in einen Stream fälschlich trennte).
+    deinit {
+        session.invalidateAndCancel()
+        eventsCont.finish()
+    }
+
     func connect() {
         guard task == nil else { return }
         let task = session.webSocketTask(with: url)

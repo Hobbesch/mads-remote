@@ -16,6 +16,9 @@ struct StreamDetailView: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            // Berechtigungsanfragen DIESES Streams direkt hier zeigen (mads-eigene Tool-Freigaben) —
+            // rendert nichts, wenn keine offen sind. (macOS-Systemdialoge sind OS-lokal, nicht spiegelbar.)
+            PermissionBanner(session: session, agentId: streamId)
             timeline
             composer
         }
@@ -33,20 +36,31 @@ struct StreamDetailView: View {
         }
     }
 
+    private let bottomID = "timeline-bottom"
+
     private var timeline: some View {
-        ScrollView {
-            if let stream {
-                VStack(alignment: .leading, spacing: 10) {
-                    header(stream)
-                    ForEach(stream.timeline) { item in
-                        TimelineItemView(item: item)
+        ScrollViewReader { proxy in
+            ScrollView {
+                if let stream {
+                    VStack(alignment: .leading, spacing: 10) {
+                        header(stream)
+                        ForEach(stream.timeline) { item in
+                            TimelineItemView(item: item)
+                        }
+                        Color.clear.frame(height: 1).id(bottomID) // Scroll-Anker am Ende
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding()
+                } else {
+                    Text("Stream nicht mehr vorhanden").foregroundStyle(.secondary).padding()
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding()
-            } else {
-                Text("Stream nicht mehr vorhanden").foregroundStyle(.secondary).padding()
             }
+            // Neue Nachricht (Timeline wächst) → ans Ende scrollen, damit der Live-Aufbau sichtbar
+            // ist, ohne dass man raus/rein navigieren muss.
+            .onChange(of: stream?.timeline.count ?? 0) { _, _ in
+                withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo(bottomID, anchor: .bottom) }
+            }
+            .onAppear { proxy.scrollTo(bottomID, anchor: .bottom) }
         }
     }
 
@@ -112,40 +126,52 @@ struct StreamDetailView: View {
     }
 }
 
+/// Eine Timeline-Zeile im mads-Look: farbiger Status-Punkt links (`tl-dot`) + Inhalt (`tl-row`).
 private struct TimelineItemView: View {
     let item: TimelineItem
 
     var body: some View {
+        HStack(alignment: .top, spacing: 8) {
+            Circle().fill(dotColor).frame(width: 7, height: 7).padding(.top, 6)
+            content
+            Spacer(minLength: 0)
+        }
+    }
+
+    @ViewBuilder private var content: some View {
         switch item.kind {
         case .assistant(let text):
-            Text(text)
-                .padding(10)
-                .background(Color.secondary.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
+            Text(markdown(text)) // Markdown wie in mads (fett/kursiv/Code/Links)
                 .frame(maxWidth: .infinity, alignment: .leading)
         case .thinking(let text):
             Text(text).font(.callout).italic().foregroundStyle(.secondary)
         case .tool(_, let name, let ok):
             HStack(spacing: 6) {
-                Image(systemName: toolIcon(ok)).foregroundStyle(toolColor(ok))
-                Text(name).font(.system(.footnote, design: .monospaced))
+                Text(name).font(.system(.footnote, design: .monospaced)).bold()
+                if let ok, !ok { Text("Fehler").font(.caption2).foregroundStyle(.red) }
             }
         case .notice(let text):
-            Text(text).font(.footnote).foregroundStyle(.secondary)
+            Text(markdown(text)).font(.footnote).foregroundStyle(.secondary)
         }
     }
 
-    private func toolIcon(_ ok: Bool?) -> String {
-        switch ok {
-        case .some(true): return "checkmark.circle.fill"
-        case .some(false): return "xmark.circle.fill"
-        case .none: return "circle.dotted"
+    /// Status-Punkt-Farbe (mads `tl-dot`): dim für Text/Thinking/Notice, grün/rot/orange für Tools.
+    private var dotColor: Color {
+        switch item.kind {
+        case .assistant, .thinking, .notice:
+            return Color.secondary.opacity(0.5)
+        case .tool(_, _, let ok):
+            switch ok {
+            case .some(true): return .green
+            case .some(false): return .red
+            case .none: return .orange // läuft
+            }
         }
     }
-    private func toolColor(_ ok: Bool?) -> Color {
-        switch ok {
-        case .some(true): return .green
-        case .some(false): return .red
-        case .none: return .secondary
-        }
+
+    private func markdown(_ s: String) -> AttributedString {
+        (try? AttributedString(
+            markdown: s,
+            options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(s)
     }
 }
