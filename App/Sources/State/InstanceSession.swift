@@ -170,6 +170,23 @@ final class InstanceSession {
         }
     }
 
+    /// AskUserQuestion aus der Ferne beantworten: pro Frage die gewählte Antwort (Schlüssel = Fragetext,
+    /// Wert = gewähltes Label oder Freitext) als `answer_questions`-Entscheidung senden — identisch zum
+    /// Desktop-`QuestionForm`. Der Sidecar formatiert daraus die Nutzer-Antwort und lässt den Agenten
+    /// fortfahren. Nur aus explizitem Tap; bei Sende-Fehler wieder einblenden.
+    func answerQuestions(agentId: String, requestId: String, answers: [String: String]) async {
+        guard let req = store.permissions.first(where: { $0.requestId == requestId }) else { return }
+        store.removePermission(requestId: requestId)
+
+        let decision: [String: Any] = ["behavior": "answer_questions", "answers": answers]
+        let delivered = await sendCommand([
+            "type": "answer_permission", "agentId": agentId, "requestId": requestId, "decision": decision,
+        ])
+        if !delivered {
+            store.restorePermission(req)
+        }
+    }
+
     /// Einfache `{ type, agentId }`-Aktion (sync_branch/create_pr/gate_task/integrate_pr/update_main/…).
     func streamAction(_ type: String, agentId: String) async {
         await sendCommand(["type": type, "agentId": agentId])

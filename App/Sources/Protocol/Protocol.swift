@@ -59,6 +59,21 @@ struct PermissionRequestInfo: Codable, Sendable, Hashable {
     let requestId: String
     let toolName: String
     let kind: String         // tool | ask_user_question
+    var questions: [AskQuestion]? = nil   // nur bei ask_user_question: Fragen samt Optionen (zum Beantworten aus der Ferne)
+}
+
+/// Eine Antwort-Option einer AskUserQuestion-Frage (Label + Erklärung).
+struct AskOption: Codable, Sendable, Hashable {
+    let label: String
+    let description: String?
+}
+
+/// Eine AskUserQuestion-Rückfrage: Fragetext + Kurz-Header + wählbare Optionen.
+struct AskQuestion: Codable, Sendable, Hashable {
+    let question: String
+    let header: String?
+    let multiSelect: Bool?
+    let options: [AskOption]
 }
 
 // MARK: - Decoding
@@ -66,7 +81,7 @@ struct PermissionRequestInfo: Codable, Sendable, Hashable {
 private enum MsgKey: String, CodingKey {
     case type, agentId, status, currentStep, totalCostUsd, numTurns, inputTokens, outputTokens
     case behind, ahead, dirty, syncBlocked, pr, event, events, reason, message, subtype, isError
-    case scope, code, recoverable, project, requestId, toolName, kind, label, role
+    case scope, code, recoverable, project, requestId, toolName, kind, label, role, questions
 }
 
 extension AgentEvent: Decodable {
@@ -143,7 +158,10 @@ extension SidecarMessage: Decodable {
                 agentId: try agentId(),
                 requestId: try c.decodeIfPresent(String.self, forKey: .requestId) ?? "",
                 toolName: try c.decodeIfPresent(String.self, forKey: .toolName) ?? "",
-                kind: try c.decodeIfPresent(String.self, forKey: .kind) ?? "tool"))
+                kind: try c.decodeIfPresent(String.self, forKey: .kind) ?? "tool",
+                // Fragen tolerant dekodieren: kaputte/fehlende Optionen dürfen die Nachricht nicht sprengen
+                // (Fallback im UI = „nur ablehnbar").
+                questions: (try? c.decodeIfPresent([AskQuestion].self, forKey: .questions)) ?? nil))
         case "agent_done":
             self = .agentDone(
                 agentId: try agentId(),
