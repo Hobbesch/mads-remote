@@ -86,6 +86,7 @@ final class InstanceStore {
         case .permissionRequest(let req):
             if !permissions.contains(where: { $0.requestId == req.requestId }) {
                 permissions.append(req)
+                notifyPermission(req)   // aus der Ferne merkbar machen (lokale Notification + Ton)
             }
             mutate(req.agentId) { $0.status = .escalation }
         case .error(_, _, _, let message, _):
@@ -98,6 +99,17 @@ final class InstanceStore {
     /// Eine (optimistisch) entfernte Berechtigungsanfrage entfernen.
     func removePermission(requestId: String) {
         permissions.removeAll { $0.requestId == requestId }
+        LocalNotifications.clear(identifier: requestId)   // beantwortet → toten Prompt aus dem Center räumen
+    }
+
+    /// Lokale Benachrichtigung mit Ton für eine NEUE Berechtigungsfrage/Rückfrage. Titel = Stream-Name,
+    /// Body = Tool bzw. (bei AskUserQuestion) die Frage — kurz genug fürs Sperrbild-Banner.
+    private func notifyPermission(_ req: PermissionRequestInfo) {
+        let stream = streams[req.agentId]?.label ?? req.agentId
+        let body = req.kind == "ask_user_question"
+            ? (req.questions?.first?.question ?? "Rückfrage zur aktuellen Arbeit")
+            : "\(req.toolName) braucht deine Erlaubnis"
+        LocalNotifications.notify(title: "\(stream) braucht eine Entscheidung", body: body, identifier: req.requestId)
     }
 
     /// Eine optimistisch entfernte Anfrage wieder einblenden (wenn das Senden der Antwort fehlschlug).

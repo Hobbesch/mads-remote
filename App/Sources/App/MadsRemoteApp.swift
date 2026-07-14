@@ -6,6 +6,9 @@ struct MadsRemoteApp: App {
     var body: some Scene {
         WindowGroup {
             RootView()
+                // Beim Start die Benachrichtigungs-Erlaubnis einholen + Vordergrund-Presenter setzen,
+                // damit Berechtigungsfragen/Rückfragen mit Ton gemeldet werden (garantiert @MainActor).
+                .task { LocalNotifications.bootstrap() }
         }
     }
 }
