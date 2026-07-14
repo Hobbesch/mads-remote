@@ -119,6 +119,16 @@ final class InstanceSession {
         }
     }
 
+    /// „Neu koppeln": den (evtl. serverseitig widerrufenen) Token verwerfen und neu verbinden. Der
+    /// gepinnte Fingerprint bleibt (Cert unverändert) → nach dem Reconnect fehlt nur der Token → die
+    /// App geht in `.needsPairing` → `PairingView` (frische PIN). Escape aus dem revoked-/Auth-
+    /// Sackgassen-Zustand, in dem „Erneut versuchen" nur den toten Token wiederholt.
+    func repair() async {
+        await disconnect()
+        KeychainStore.forgetToken(instanceId: instance.id)
+        await start()
+    }
+
     // MARK: - Command-Plane (P3.1) — die App fernsteuert
 
     /// Sendet einen command-Frame. `true` = auf den Socket geschrieben (kein Wurf). KEIN echtes Ack

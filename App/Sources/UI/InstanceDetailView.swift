@@ -25,6 +25,11 @@ struct InstanceDetailView: View {
                 } description: {
                     Text(reason)
                 } actions: {
+                    // „Neu koppeln" verwirft den (evtl. widerrufenen) Token → PairingView (frische PIN).
+                    // Das ist der Ausweg aus „Gerät widerrufen"; „Erneut versuchen" allein wiederholte
+                    // nur den toten Token.
+                    Button("Neu koppeln") { Task { await session.repair() } }
+                        .buttonStyle(.borderedProminent)
                     Button("Erneut versuchen") { Task { await session.start() } }
                 }
             }

@@ -19,6 +19,9 @@ enum KeychainStore {
         delete(account: "token:\(instanceId)")
         delete(account: "fp:\(instanceId)")
     }
+    /// Nur den (z. B. serverseitig widerrufenen) Token verwerfen — der gepinnte Server-Fingerprint
+    /// bleibt (Cert unverändert) → beim Reconnect fehlt nur der Token → die App geht ins Pairing.
+    static func forgetToken(instanceId: String) { delete(account: "token:\(instanceId)") }
 
     // MARK: SecItem-Kern
 
