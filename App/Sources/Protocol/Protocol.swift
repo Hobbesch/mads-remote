@@ -45,6 +45,7 @@ struct PullRequestInfo: Codable, Sendable, Hashable {
 }
 
 enum AgentEvent: Sendable {
+    case userText(String)        // vom Menschen (Mac ODER Remote) eingegebene Anweisung, vom Sidecar ausgespielt
     case assistantText(String)
     case assistantDelta(String)
     case thinking(String)
@@ -91,6 +92,7 @@ extension AgentEvent: Decodable {
         let c = try decoder.container(keyedBy: K.self)
         let kind = try c.decodeIfPresent(String.self, forKey: .kind) ?? "unknown"
         switch kind {
+        case "user_text": self = .userText(try c.decodeIfPresent(String.self, forKey: .text) ?? "")
         case "assistant_text": self = .assistantText(try c.decodeIfPresent(String.self, forKey: .text) ?? "")
         case "assistant_delta": self = .assistantDelta(try c.decodeIfPresent(String.self, forKey: .text) ?? "")
         case "thinking": self = .thinking(try c.decodeIfPresent(String.self, forKey: .text) ?? "")

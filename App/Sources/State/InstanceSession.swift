@@ -154,9 +154,9 @@ final class InstanceSession {
     func sendInput(agentId: String, text: String) async -> Bool {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return false }
-        let delivered = await sendCommand(["type": "send_input", "agentId": agentId, "text": trimmed])
-        if delivered { store.addSentMessage(agentId: agentId, text: trimmed) } // eigene Nachricht sichtbar machen
-        return delivered
+        // Nicht optimistisch eintragen: der Sidecar spielt die Anweisung als user_text-Event zurück
+        // (an ALLE gepairten Geräte inkl. dieses) → beidseitig sichtbar, im Snapshot-Puffer, kein Duplikat.
+        return await sendCommand(["type": "send_input", "agentId": agentId, "text": trimmed])
     }
 
     func interrupt(agentId: String) async { await sendCommand(["type": "interrupt_agent", "agentId": agentId]) }

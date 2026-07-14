@@ -124,16 +124,11 @@ final class InstanceStore {
         lastError = message
     }
 
-    /// Eine von der App gesendete Nachricht optimistisch in die Timeline eintragen — der Sidecar
-    /// emittiert dafür (noch) kein Event, und mads trägt eigene Nachrichten ebenfalls lokal ein.
-    func addSentMessage(agentId: String, text: String) {
-        pushTimeline(agentId, .user(text))
-    }
-
     // MARK: - intern
 
     private func applyAgentEvent(_ id: String, _ event: AgentEvent) {
         switch event {
+        case .userText(let t): pushTimeline(id, .user(t))
         case .assistantText(let t): pushTimeline(id, .assistant(t))
         case .thinking(let t): pushTimeline(id, .thinking(t))
         case .toolUse(let uid, let name): pushTimeline(id, .tool(id: uid, name: name, ok: nil))
