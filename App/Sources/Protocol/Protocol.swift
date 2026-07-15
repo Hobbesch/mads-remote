@@ -13,6 +13,8 @@ enum SidecarMessage: Sendable {
     case agentTimeline(agentId: String, events: [AgentEvent])
     case needsInput(agentId: String, reason: String, message: String?)
     case permissionRequest(PermissionRequestInfo)
+    case permissionResolved(agentId: String, requestId: String)  // woanders beantwortet/abgebrochen → Karte weg
+    case permissionsOpen(agentId: String, requestIds: [String])  // autoritative offene requestIds → veraltete Karten prunen
     case agentDone(agentId: String, subtype: String, isError: Bool)
     case error(agentId: String?, scope: String, code: String, message: String, recoverable: Bool)
     case unknown(type: String)
@@ -82,7 +84,7 @@ struct AskQuestion: Codable, Sendable, Hashable {
 private enum MsgKey: String, CodingKey {
     case type, agentId, status, currentStep, totalCostUsd, numTurns, inputTokens, outputTokens
     case behind, ahead, dirty, syncBlocked, pr, event, events, reason, message, subtype, isError
-    case scope, code, recoverable, project, requestId, toolName, kind, label, role, questions
+    case scope, code, recoverable, project, requestId, requestIds, toolName, kind, label, role, questions
 }
 
 extension AgentEvent: Decodable {
@@ -164,6 +166,14 @@ extension SidecarMessage: Decodable {
                 // Fragen tolerant dekodieren: kaputte/fehlende Optionen dürfen die Nachricht nicht sprengen
                 // (Fallback im UI = „nur ablehnbar").
                 questions: (try? c.decodeIfPresent([AskQuestion].self, forKey: .questions)) ?? nil))
+        case "permission_resolved":
+            self = .permissionResolved(
+                agentId: try agentId(),
+                requestId: try c.decodeIfPresent(String.self, forKey: .requestId) ?? "")
+        case "permissions_open":
+            self = .permissionsOpen(
+                agentId: try agentId(),
+                requestIds: try c.decodeIfPresent([String].self, forKey: .requestIds) ?? [])
         case "agent_done":
             self = .agentDone(
                 agentId: try agentId(),

@@ -89,6 +89,20 @@ final class InstanceStore {
                 notifyPermission(req)   // aus der Ferne merkbar machen (lokale Notification + Ton)
             }
             mutate(req.agentId) { $0.status = .escalation }
+        case .permissionResolved(_, let requestId):
+            // Woanders beantwortet (Mac / dieses oder ein anderes Gerät) oder abgebrochen → Karte hier
+            // entfernen (auch wenn NICHT dieses Gerät geantwortet hat) und die Notification abräumen.
+            // Den Stream-Status NICHT selbst umsetzen: der Sidecar sendet dazu ein eigenes status_update
+            // (running bei Antwort, paused bei Interrupt, error bei Stop) — das ist die Wahrheit. Ein
+            // eigener .running-Reset würde einen gestoppten Agent fälschlich als „läuft" zeigen und für
+            // eine unbekannte agentId sogar einen Geister-Stream anlegen.
+            removePermission(requestId: requestId)
+        case .permissionsOpen(let agentId, let openRequestIds):
+            // Autoritativer Snapshot: Karten dieses Agents entfernen, deren requestId nicht mehr offen ist
+            // (z. B. offline aufgelöst → permission_resolved verpasst). Andere Agents unberührt; kein Re-Notify.
+            let open = Set(openRequestIds)
+            let stale = permissions.filter { $0.agentId == agentId && !open.contains($0.requestId) }
+            for p in stale { removePermission(requestId: p.requestId) }
         case .error(_, _, _, let message, _):
             lastError = message
         case .unknown:

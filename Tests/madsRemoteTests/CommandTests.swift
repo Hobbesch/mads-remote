@@ -19,6 +19,43 @@ struct CommandTests {
         #expect(store.permissions.isEmpty)
     }
 
+    @Test func permissionResolvedClearsCardWithoutAnsweringHere() {
+        let store = InstanceStore()
+        let req = PermissionRequestInfo(agentId: "a", requestId: "r1", toolName: "Bash", kind: "tool")
+        store.apply(.permissionRequest(req))
+        #expect(store.permissions.count == 1)
+        #expect(store.streams["a"]?.status == .escalation)
+
+        // Woanders beantwortet (Mac / anderes Gerät): der Sidecar broadcastet permission_resolved —
+        // die Karte muss hier verschwinden, OBWOHL dieses Gerät nicht geantwortet hat.
+        store.apply(.permissionResolved(agentId: "a", requestId: "r1"))
+        #expect(store.permissions.isEmpty)
+        // Status wird NICHT selbst umgesetzt (kein fälschliches .running bei gestopptem Agent) — der
+        // Sidecar sendet dafür ein eigenes status_update. Bis dahin bleibt der letzte Stand.
+        #expect(store.streams["a"]?.status == .escalation)
+
+        // Unbekannte requestId → kein Absturz, keine Wirkung, KEIN Geister-Stream für unbekannte agentId.
+        store.apply(.permissionResolved(agentId: "ghost", requestId: "does-not-exist"))
+        #expect(store.permissions.isEmpty)
+        #expect(store.streams["ghost"] == nil)
+    }
+
+    @Test func permissionsOpenPrunesStaleCardsAuthoritatively() {
+        let store = InstanceStore()
+        store.apply(.permissionRequest(PermissionRequestInfo(agentId: "a", requestId: "r1", toolName: "Bash", kind: "tool")))
+        store.apply(.permissionRequest(PermissionRequestInfo(agentId: "a", requestId: "r2", toolName: "Bash", kind: "tool")))
+        store.apply(.permissionRequest(PermissionRequestInfo(agentId: "b", requestId: "r3", toolName: "Bash", kind: "tool")))
+        #expect(store.permissions.count == 3)
+
+        // Snapshot sagt: für Agent a ist nur noch r2 offen (r1 wurde verpasst-aufgelöst). b unberührt.
+        store.apply(.permissionsOpen(agentId: "a", requestIds: ["r2"]))
+        #expect(Set(store.permissions.map(\.requestId)) == ["r2", "r3"])
+
+        // Leere Liste für a → alle a-Karten weg, b bleibt.
+        store.apply(.permissionsOpen(agentId: "a", requestIds: []))
+        #expect(store.permissions.map(\.requestId) == ["r3"])
+    }
+
     @Test func answerPermissionDecisionEnvelope() throws {
         let frame = OutgoingFrame.command(hostMessage: [
             "type": "answer_permission", "agentId": "a", "requestId": "r",

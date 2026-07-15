@@ -9,7 +9,15 @@ enum LocalNotifications {
     @MainActor static func bootstrap() {
         let center = UNUserNotificationCenter.current()
         center.delegate = ForegroundPresenter.shared
-        center.requestAuthorization(options: [.alert, .sound, .badge]) { _, _ in }
+        center.requestAuthorization(options: [.alert, .sound, .badge]) { granted, error in
+            // Ergebnis NICHT verwerfen: bei Ablehnung liefert iOS sonst lautlos gar nichts. Sichtbar
+            // machen, damit klar ist, warum keine Meldung kommt (Nutzer muss es in den Einstellungen lösen).
+            if let error {
+                NSLog("[mads-remote] Notification-Authorization fehlgeschlagen: \(error.localizedDescription)")
+            } else if !granted {
+                NSLog("[mads-remote] Notifications abgelehnt — Einstellungen › mads-remote › Mitteilungen aktivieren.")
+            }
+        }
     }
 
     /// Eine Benachrichtigung mit Ton posten. `identifier` = requestId → dieselbe Anfrage wird nicht
@@ -25,7 +33,9 @@ enum LocalNotifications {
         // auf eine normale Benachrichtigung (Banner + Ton, wenn nicht stumm) — kein Fehler.
         content.interruptionLevel = .timeSensitive
         let request = UNNotificationRequest(identifier: identifier, content: content, trigger: nil)
-        UNUserNotificationCenter.current().add(request)
+        UNUserNotificationCenter.current().add(request) { error in
+            if let error { NSLog("[mads-remote] Notification konnte nicht gestellt werden: \(error.localizedDescription)") }
+        }
     }
 
     /// Eine beantwortete/entfernte Anfrage aus dem Notification-Center räumen (kein toter Prompt).
