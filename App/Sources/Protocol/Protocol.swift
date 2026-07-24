@@ -47,7 +47,7 @@ struct PullRequestInfo: Codable, Sendable, Hashable {
 }
 
 enum AgentEvent: Sendable {
-    case userText(String)        // vom Menschen (Mac ODER Remote) eingegebene Anweisung, vom Sidecar ausgespielt
+    case userText(text: String, attachments: [TimelineAttachment])  // Anweisung vom Menschen (Mac ODER Remote)
     case assistantText(String)
     case assistantDelta(String)
     case thinking(String)
@@ -55,6 +55,15 @@ enum AgentEvent: Sendable {
     case toolResult(toolUseId: String, ok: Bool, summary: String?)
     case system(subtype: String)
     case unknown(kind: String)
+}
+
+/// Ein Bild-Anhang einer User-Nachricht. Es kommt NUR das kleine Inline-Thumbnail an — das Vollbild
+/// bleibt am Mac auf Platte (`.mads` ist über die Bridge bewusst nicht lesbar), und ein mehrere MB
+/// grosses Bild soll nicht durch Ringpuffer/Snapshot-Replay/WSS wandern.
+struct TimelineAttachment: Codable, Sendable, Hashable, Identifiable {
+    let id: String
+    let mediaType: String
+    var thumbBase64: String? = nil
 }
 
 struct PermissionRequestInfo: Codable, Sendable, Hashable {
@@ -88,13 +97,17 @@ private enum MsgKey: String, CodingKey {
 }
 
 extension AgentEvent: Decodable {
-    private enum K: String, CodingKey { case kind, text, toolUseId, name, ok, summary, subtype }
+    private enum K: String, CodingKey { case kind, text, toolUseId, name, ok, summary, subtype, attachments }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: K.self)
         let kind = try c.decodeIfPresent(String.self, forKey: .kind) ?? "unknown"
         switch kind {
-        case "user_text": self = .userText(try c.decodeIfPresent(String.self, forKey: .text) ?? "")
+        case "user_text":
+            // Anhänge tolerant dekodieren: ein kaputter Anhang darf die Nachricht nicht sprengen.
+            self = .userText(
+                text: try c.decodeIfPresent(String.self, forKey: .text) ?? "",
+                attachments: ((try? c.decodeIfPresent([TimelineAttachment].self, forKey: .attachments)) ?? nil) ?? [])
         case "assistant_text": self = .assistantText(try c.decodeIfPresent(String.self, forKey: .text) ?? "")
         case "assistant_delta": self = .assistantDelta(try c.decodeIfPresent(String.self, forKey: .text) ?? "")
         case "thinking": self = .thinking(try c.decodeIfPresent(String.self, forKey: .text) ?? "")

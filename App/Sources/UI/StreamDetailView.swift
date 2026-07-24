@@ -126,19 +126,70 @@ struct StreamDetailView: View {
     }
 }
 
+/// Bild-Anhänge einer Anweisung: das ECHTE Thumbnail (reiste klein im user_text-Event mit), Tippen →
+/// gross. Das VOLLBILD liegt nur am Mac auf Platte — `.mads` ist über die Bridge bewusst nicht lesbar,
+/// und ein mehrere MB grosses Bild soll nicht durch Ringpuffer/Snapshot-Replay/WSS wandern.
+private struct AttachmentThumbs: View {
+    let items: [TimelineAttachment]
+    @State private var zoomed: TimelineAttachment?
+
+    var body: some View {
+        HStack(spacing: 6) {
+            ForEach(items) { a in
+                if let img = Self.image(a) {
+                    Button { zoomed = a } label: {
+                        Image(uiImage: img)
+                            .resizable().scaledToFill()
+                            .frame(width: 96, height: 72).clipped()
+                            .clipShape(RoundedRectangle(cornerRadius: 8))
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Angehängtes Bild — tippen zum Vergrössern")
+                } else {
+                    // Kein Thumbnail (z. B. SVG/nicht dekodierbar) → neutraler Hinweis statt leerer Fläche.
+                    Text("Bild")
+                        .font(.caption2)
+                        .padding(.horizontal, 7).padding(.vertical, 2)
+                        .background(Color.accentColor.opacity(0.15), in: Capsule())
+                }
+            }
+        }
+        .sheet(item: $zoomed) { a in
+            ZStack {
+                Color.black.ignoresSafeArea()
+                if let img = Self.image(a) {
+                    Image(uiImage: img).resizable().scaledToFit()
+                }
+            }
+            .onTapGesture { zoomed = nil }
+        }
+    }
+
+    private static func image(_ a: TimelineAttachment) -> UIImage? {
+        guard let b64 = a.thumbBase64, let data = Data(base64Encoded: b64) else { return nil }
+        return UIImage(data: data)
+    }
+}
+
 /// Eine Timeline-Zeile im mads-Look: farbiger Status-Punkt links (`tl-dot`) + Inhalt (`tl-row`).
 private struct TimelineItemView: View {
     let item: TimelineItem
 
     var body: some View {
-        if case .user(let text) = item.kind {
-            // Eigene Nachricht: rechtsbündige Akzent-Blase (wie ein gesendeter Chat-Eintrag).
+        if case .user(let text, let attachments) = item.kind {
+            // Anweisung vom Menschen: rechtsbündige Akzent-Blase (wie ein gesendeter Chat-Eintrag),
+            // darunter die echten Bild-Thumbnails (kamen inline im Event mit).
             HStack {
                 Spacer(minLength: 32)
-                Text(markdown(text))
-                    .padding(.horizontal, 12).padding(.vertical, 8)
-                    .background(Color.accentColor, in: RoundedRectangle(cornerRadius: 14))
-                    .foregroundStyle(.white)
+                VStack(alignment: .trailing, spacing: 6) {
+                    if !text.isEmpty {
+                        Text(markdown(text))
+                            .padding(.horizontal, 12).padding(.vertical, 8)
+                            .background(Color.accentColor, in: RoundedRectangle(cornerRadius: 14))
+                            .foregroundStyle(.white)
+                    }
+                    if !attachments.isEmpty { AttachmentThumbs(items: attachments) }
+                }
             }
         } else {
             HStack(alignment: .top, spacing: 8) {

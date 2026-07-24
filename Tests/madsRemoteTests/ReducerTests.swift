@@ -80,6 +80,47 @@ struct ReducerTests {
         #expect(events.count == 2)
     }
 
+    /// Wire-Contract zur mads-Seite: user_text trägt Text + Bild-Anhänge (kleines Inline-Thumbnail,
+    /// KEIN Vollbild). Muss als .user-Timeline-Item mit Anhängen ankommen, damit das echte Bild
+    /// statt eines Zählers erscheint. `path` ist Mac-only und wird hier bewusst ignoriert.
+    @Test func decodesUserTextWithImageAttachment() {
+        let frame = #"""
+        {"v":1,"id":"x","ts":0,"channel":"event","msg":{"type":"agent_event","agentId":"a","event":{"kind":"user_text","text":"schau dir das an","attachments":[{"id":"att-1","mediaType":"image/png","thumbBase64":"AAAA","thumbMediaType":"image/jpeg","path":"/repo/.mads/attachments/att-1.png"}]}}}
+        """#
+        guard case .agentEvent(let agentId, let event)? = WireFrame.decode(frame)?.msg else {
+            Issue.record("kein agentEvent decodiert"); return
+        }
+        #expect(agentId == "a")
+        guard case .userText(let text, let atts) = event else {
+            Issue.record("kein userText decodiert"); return
+        }
+        #expect(text == "schau dir das an")
+        #expect(atts.count == 1)
+        #expect(atts.first?.id == "att-1")
+        #expect(atts.first?.mediaType == "image/png")
+        #expect(atts.first?.thumbBase64 == "AAAA")
+
+        // Reducer: landet als .user-Item MIT Anhang in der Timeline.
+        let store = InstanceStore()
+        store.apply(.agentEvent(agentId: "a", event: event))
+        guard case .user(let t, let a)? = store.streams["a"]?.timeline.last?.kind else {
+            Issue.record("kein .user-Item"); return
+        }
+        #expect(t == "schau dir das an")
+        #expect(a.count == 1)
+    }
+
+    /// Ohne Anhänge bleibt es eine normale Text-Anweisung (leeres Array, kein Absturz).
+    @Test func decodesUserTextWithoutAttachments() {
+        let frame = #"{"v":1,"id":"x","ts":0,"channel":"event","msg":{"type":"agent_event","agentId":"a","event":{"kind":"user_text","text":"nur text"}}}"#
+        guard case .agentEvent(_, let event)? = WireFrame.decode(frame)?.msg,
+              case .userText(let text, let atts) = event else {
+            Issue.record("kein userText decodiert"); return
+        }
+        #expect(text == "nur text")
+        #expect(atts.isEmpty)
+    }
+
     @Test func decodesEventFrameAndApplies() {
         let frame = #"{"v":1,"id":"x","ts":0,"channel":"event","msg":{"type":"status_update","agentId":"z","status":"waiting_input"}}"#
         let wf = WireFrame.decode(frame)

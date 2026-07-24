@@ -24,7 +24,7 @@ struct TimelineItem: Identifiable, Sendable {
     let id: Int
     var kind: Kind
     enum Kind: Sendable {
-        case user(String)        // eigene, von der App gesendete Nachricht
+        case user(String, [TimelineAttachment])  // Anweisung vom Menschen (+ Bild-Anhänge als Thumbnails)
         case assistant(String)
         case thinking(String)
         case tool(id: String, name: String, ok: Bool?)
@@ -142,7 +142,7 @@ final class InstanceStore {
 
     private func applyAgentEvent(_ id: String, _ event: AgentEvent) {
         switch event {
-        case .userText(let t): pushTimeline(id, .user(t))
+        case .userText(let t, let atts): pushTimeline(id, .user(t, atts))
         case .assistantText(let t): pushTimeline(id, .assistant(t))
         case .thinking(let t): pushTimeline(id, .thinking(t))
         case .toolUse(let uid, let name): pushTimeline(id, .tool(id: uid, name: name, ok: nil))
