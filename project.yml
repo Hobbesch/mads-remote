@@ -16,6 +16,15 @@ settings:
     CURRENT_PROJECT_VERSION: "1"
     IPHONEOS_DEPLOYMENT_TARGET: "18.0"
 
+packages:
+  # On-Device-Whisper (CoreML) für die lokale Spracheingabe. BEWUSST auf 0.13.1 gepinnt: die letzte
+  # eigenständige WhisperKit-Version, BEVOR das Repo zum Monorepo `argmax-oss-swift` wurde und
+  # schwere Server-Abhängigkeiten (Vapor, swift-openapi) ins Package zog. 0.13.1 hängt nur an
+  # swift-transformers + swift-argument-parser. API identisch zu 1.0 (verifiziert).
+  WhisperKit:
+    url: https://github.com/argmaxinc/WhisperKit.git
+    exactVersion: 0.13.1
+
 targets:
   mads-remote:
     type: application
@@ -23,6 +32,9 @@ targets:
     sources:
       - App/Sources
       - App/Resources
+    dependencies:
+      - package: WhisperKit
+        product: WhisperKit
     # Lokale Signing-Config (gitignored): DEVELOPMENT_TEAM fürs Geräte-Deployment. Simulator baut
     # ohne Team („Sign to Run Locally"). Kopiere Signing.xcconfig.example → Signing.xcconfig und
     # trag dein Team ein (oder wähle es in Xcode unter „Signing & Capabilities").

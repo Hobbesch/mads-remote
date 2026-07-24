@@ -48,6 +48,9 @@
 	<!-- Kamera: nur fürs Scannen des Pairing-QR-Codes (VisionKit DataScanner). -->
 	<key>NSCameraUsageDescription</key>
 	<string>Zum Scannen des mads-Pairing-QR-Codes.</string>
+	<!-- Mikrofon: nur für lokale Spracheingabe von Prompts (Whisper, on-device). -->
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Für die Spracheingabe von Prompts — die Erkennung läuft lokal auf dem Gerät.</string>
 	<key>NSBonjourServices</key>
 	<array>
 		<string>_mads-remote._tcp</string>

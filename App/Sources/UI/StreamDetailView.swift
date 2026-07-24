@@ -10,6 +10,7 @@ struct StreamDetailView: View {
     @State private var confirmCreatePR = false
     @State private var confirmIntegrate = false
     @State private var confirmStop = false
+    @StateObject private var dictation = DictationController()
 
     private var store: InstanceStore { session.store }
     private var stream: Stream? { store.streams[streamId] }
@@ -24,6 +25,7 @@ struct StreamDetailView: View {
         }
         .navigationTitle(streamTitle)
         .navigationBarTitleDisplayMode(.inline)
+        .onDisappear { dictation.cancel() } // Ansicht verlassen → laufende Diktat-Aufnahme verwerfen
         .toolbar { ToolbarItem(placement: .topBarTrailing) { actionMenu } }
         .confirmationDialog("Pull Request erstellen?", isPresented: $confirmCreatePR, titleVisibility: .visible) {
             Button("PR erstellen") { Task { await session.streamAction("create_pr", agentId: streamId) } }
@@ -67,25 +69,80 @@ struct StreamDetailView: View {
     private var streamTitle: String { stream?.label ?? streamId }
 
     private var composer: some View {
-        HStack(spacing: 8) {
-            TextField("Nachricht an den Stream …", text: $draft, axis: .vertical)
-                .textFieldStyle(.roundedBorder)
-                .lineLimit(1...4)
-            Button {
-                let text = draft
-                Task {
-                    // Feld erst leeren, wenn die Nachricht wirklich rausging (sonst geht sie verloren).
-                    if await session.sendInput(agentId: streamId, text: text) {
-                        draft = ""
-                    }
+        VStack(spacing: 4) {
+            // Status der Spracheingabe (Download/Aufnahme/Transkription/Fehler) — nur wenn relevant.
+            if let status = dictation.statusText {
+                HStack(spacing: 6) {
+                    if dictation.showsSpinner { ProgressView().controlSize(.mini) }
+                    Text(status)
+                        .font(.caption2)
+                        .foregroundStyle(dictation.isError ? Color.red : .secondary)
+                    Spacer(minLength: 0)
                 }
-            } label: {
-                Image(systemName: "arrow.up.circle.fill").font(.title2)
             }
-            .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            HStack(spacing: 8) {
+                TextField("Nachricht an den Stream …", text: $draft, axis: .vertical)
+                    .textFieldStyle(.roundedBorder)
+                    .lineLimit(1...4)
+                micButton
+                if isStreamActive { stopButton } // laufenden Prozess unterbrechen (wie der Prompt-Stopp in mads)
+                Button {
+                    let text = draft
+                    Task {
+                        // Feld erst leeren, wenn die Nachricht wirklich rausging (sonst geht sie verloren).
+                        if await session.sendInput(agentId: streamId, text: text) {
+                            draft = ""
+                        }
+                    }
+                } label: {
+                    Image(systemName: "arrow.up.circle.fill").font(.title2)
+                }
+                .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
         }
         .padding(8)
         .background(.bar)
+    }
+
+    /// Arbeitet der Stream gerade aktiv (läuft ein Turn)? Dann ist ein Unterbrechen sinnvoll.
+    private var isStreamActive: Bool {
+        stream?.status == .running || stream?.status == .starting
+    }
+
+    /// Prominenter Stopp-Knopf im Composer — unterbricht den laufenden Turn (wie der Prompt-Stopp in der
+    /// Desktop-mads). Nutzt denselben Pfad wie „Unterbrechen" im Menü (interrupt_agent).
+    private var stopButton: some View {
+        Button {
+            Task { await session.interrupt(agentId: streamId) }
+        } label: {
+            Image(systemName: "stop.circle.fill")
+                .font(.title2)
+                .foregroundStyle(.red)
+        }
+        .accessibilityLabel("Laufenden Prozess unterbrechen")
+    }
+
+    /// Spracheingabe: tippen startet die lokale Whisper-Diktierung, erneutes Tippen stoppt und fügt
+    /// den erkannten Text an den Entwurf an (überschreibt Getipptes nie). Rot + pulsierend bei Aufnahme.
+    private var micButton: some View {
+        Button {
+            Task {
+                if dictation.isRecording {
+                    if let text = await dictation.stopAndTranscribe(), !text.isEmpty {
+                        draft = draft.isEmpty ? text : draft + " " + text
+                    }
+                } else {
+                    await dictation.startRecording()
+                }
+            }
+        } label: {
+            Image(systemName: dictation.isRecording ? "stop.circle.fill" : "mic.fill")
+                .font(.title2)
+                .foregroundStyle(dictation.isRecording ? Color.red : (dictation.isBusy ? Color.secondary : Color.accentColor))
+                .symbolEffect(.pulse, isActive: dictation.isRecording)
+        }
+        .disabled(dictation.isBusy)
+        .accessibilityLabel(dictation.isRecording ? "Diktat stoppen" : "Per Sprache diktieren")
     }
 
     private var actionMenu: some View {
