@@ -53,9 +53,22 @@ struct DiscoveredInstance: Identifiable, Hashable, Sendable {
         return serviceName == "mads-\(fp.prefix(12))"
     }
 
-    /// Mehrere Bonjour-Einträge derselben Instanz (gleicher Fingerprint = gleiche `id`) zu EINEM
-    /// entdoppeln. Bevorzugt den fp-benannten (lebenden) Eintrag; so verschwinden veraltete
-    /// pid-benannte Karteileichen mit totem Port aus der Liste, sobald der lebende sichtbar ist.
+    /// Wie aktuell ist dieser Eintrag? Höher schlägt niedriger, wenn zwei Einträge dieselbe Instanz
+    /// meinen. Ein `iid` sendet nur die aktuelle mads-Version, ein stabiler Service-Name spricht
+    /// gegen eine pid-benannte Karteileiche.
+    var freshnessRank: Int { (txtInstanceId != nil ? 2 : 0) + (isStablyNamed ? 1 : 0) }
+
+    /// Mehrere Bonjour-Einträge derselben Instanz zu EINEM entdoppeln, in zwei Stufen.
+    ///
+    /// Stufe 1 fasst zusammen, was dieselbe `id` trägt (mehrere Interfaces, mehrere Announcements).
+    ///
+    /// Stufe 2 fasst zusammen, was auf denselben `host:port` zeigt. Das braucht es für Karteileichen
+    /// einer ÄLTEREN mads-Version, die ein hart beendeter Vorgänger im mDNS-Cache hinterlassen hat:
+    /// die tragen kein `iid` und den damaligen, projekt-eigenen Fingerprint, also eine andere `id` —
+    /// Stufe 1 sieht sie als eigene Instanz. Sichtbar wird das als Doppel-Eintrag, von dem nur einer
+    /// verbindet: der veraltete Fingerprint passt nicht mehr zum Zertifikat, das der Server
+    /// ausliefert, und der Pin schlägt fehl. Einträge ohne annoncierte Adresse gehen unangetastet
+    /// durch, sonst verschwänden Instanzen, deren TXT-Record noch unvollständig ist.
     static func dedupePreferringLive(_ items: [DiscoveredInstance]) -> [DiscoveredInstance] {
         var byId: [String: DiscoveredInstance] = [:]
         for item in items {
@@ -63,7 +76,19 @@ struct DiscoveredInstance: Identifiable, Hashable, Sendable {
             // Ersetzen nur, wenn der neue stabil benannt ist und der bestehende nicht (sonst halten).
             if item.isStablyNamed && !existing.isStablyNamed { byId[item.id] = item }
         }
-        return Array(byId.values)
+
+        var byEndpoint: [String: DiscoveredInstance] = [:]
+        var withoutEndpoint: [DiscoveredInstance] = []
+        for item in byId.values {
+            guard let host = item.directHost, let port = item.directPort else {
+                withoutEndpoint.append(item)
+                continue
+            }
+            let key = "\(host):\(port)"
+            guard let existing = byEndpoint[key] else { byEndpoint[key] = item; continue }
+            if item.freshnessRank > existing.freshnessRank { byEndpoint[key] = item }
+        }
+        return Array(byEndpoint.values) + withoutEndpoint
     }
 
     /// Pure TXT→Felder-Abbildung — von `NWBrowser` entkoppelt und damit unit-testbar.
@@ -80,15 +105,16 @@ struct DiscoveredInstance: Identifiable, Hashable, Sendable {
 #if DEBUG
 extension DiscoveredInstance {
     /// Nur für Tests: konstruiert eine Instanz ohne `NWBrowser.Result`.
-    init(testId: String, name: String, project: String, fingerprint: String?, serviceName: String? = nil, instanceId: String? = nil) {
+    init(testId: String, name: String, project: String, fingerprint: String?, serviceName: String? = nil,
+         instanceId: String? = nil, host: String? = nil, port: UInt16? = nil) {
         self.id = testId
         self.name = name
         self.project = project
         self.pid = nil
         self.protocolVersion = nil
         self.fingerprint = fingerprint
-        self.directHost = nil
-        self.directPort = nil
+        self.directHost = host
+        self.directPort = port
         self.serviceName = serviceName ?? testId
         self.txtInstanceId = instanceId
         self.endpoint = .hostPort(host: "127.0.0.1", port: 1)

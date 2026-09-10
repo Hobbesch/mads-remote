@@ -64,6 +64,38 @@ struct DiscoveryTests {
         #expect(out.count == 1) // beide pid-benannt → einer bleibt (kein Absturz/Doppel)
     }
 
+    /// Eine Karteileiche der VORIGEN mads-Version (kein `iid`, damaliger projekt-eigener
+    /// Fingerprint) trägt eine andere `id` als der lebende Eintrag, zeigt aber auf denselben
+    /// Host und Port. Ohne die Endpunkt-Stufe steht sie als zweiter Eintrag in der Liste, der am
+    /// veralteten Pin scheitert.
+    @Test func dedupesStaleEntryPointingAtSameEndpoint() {
+        let stale = DiscoveredInstance(testId: String(repeating: "8", count: 64), name: "mads Remote (p)",
+                                       project: "p", fingerprint: String(repeating: "8", count: 64),
+                                       serviceName: "mads-888888888888", host: "10.0.0.24", port: 57675)
+        let live = DiscoveredInstance(testId: "d5fa5422ae18", name: "mads Remote (p)", project: "p",
+                                      fingerprint: String(repeating: "2", count: 64),
+                                      serviceName: "mads-d5fa5422ae18", instanceId: "d5fa5422ae18",
+                                      host: "10.0.0.24", port: 57675)
+        for input in [[stale, live], [live, stale]] {
+            let out = DiscoveredInstance.dedupePreferringLive(input)
+            #expect(out.count == 1)
+            #expect(out.first?.txtInstanceId == "d5fa5422ae18")
+        }
+    }
+
+    /// Zwei parallel offene Projekte lauschen auf verschiedenen Ports — die Endpunkt-Stufe darf sie
+    /// nicht zusammenwerfen, obwohl sie sich seit der Host-Umstellung den Fingerprint teilen.
+    @Test func keepsDistinctPortsSeparate() {
+        let fp = String(repeating: "2", count: 64)
+        let a = DiscoveredInstance(testId: "aaaaaaaaaaaa", name: "A", project: "a", fingerprint: fp,
+                                   serviceName: "mads-aaaaaaaaaaaa", instanceId: "aaaaaaaaaaaa",
+                                   host: "10.0.0.24", port: 57675)
+        let b = DiscoveredInstance(testId: "bbbbbbbbbbbb", name: "B", project: "b", fingerprint: fp,
+                                   serviceName: "mads-bbbbbbbbbbbb", instanceId: "bbbbbbbbbbbb",
+                                   host: "10.0.0.24", port: 57246)
+        #expect(DiscoveredInstance.dedupePreferringLive([a, b]).count == 2)
+    }
+
     @Test func stableNameMatchesEitherScheme() {
         let fp = String(repeating: "c", count: 64)
         let live = DiscoveredInstance(testId: fp, name: "m", project: "p", fingerprint: fp, serviceName: "mads-\(fp.prefix(12))")
