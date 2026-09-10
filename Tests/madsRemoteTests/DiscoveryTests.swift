@@ -4,12 +4,20 @@ import Testing
 /// TXT→Felder-Abbildung der Bonjour-Discovery (pure, ohne NWBrowser).
 struct DiscoveryTests {
     @Test func parsesFullTxtRecord() {
-        let txt = ["name": "Hobbesch/mads", "project": "mads", "pid": "4242", "pv": "1", "fp": "abcd1234"]
-        let f = DiscoveredInstance.fields(txt: txt, serviceName: "mads-4242")
+        let txt = ["name": "Hobbesch/mads", "project": "mads", "pid": "4242", "pv": "1", "fp": "abcd1234", "iid": "0123456789ab"]
+        let f = DiscoveredInstance.fields(txt: txt, serviceName: "mads-0123456789ab")
         #expect(f.name == "Hobbesch/mads")
         #expect(f.project == "mads")
         #expect(f.pid == "4242")
         #expect(f.pv == "1")
+        #expect(f.fp == "abcd1234")
+        #expect(f.iid == "0123456789ab")
+    }
+
+    /// Ältere mads-Versionen kennen `iid` noch nicht — dann bleibt der fp die Identität.
+    @Test func instanceIdIsOptionalForOlderHosts() {
+        let f = DiscoveredInstance.fields(txt: ["fp": "abcd1234"], serviceName: "mads-abcd1234")
+        #expect(f.iid == nil)
         #expect(f.fp == "abcd1234")
     }
 
@@ -19,6 +27,7 @@ struct DiscoveryTests {
         #expect(f.project == "")
         #expect(f.pid == nil)
         #expect(f.fp == nil)
+        #expect(f.iid == nil)
     }
 
     @Test func emptyNameFallsBackToServiceName() {
@@ -55,11 +64,28 @@ struct DiscoveryTests {
         #expect(out.count == 1) // beide pid-benannt → einer bleibt (kein Absturz/Doppel)
     }
 
-    @Test func isFingerprintNamedMatchesScheme() {
+    @Test func stableNameMatchesEitherScheme() {
         let fp = String(repeating: "c", count: 64)
         let live = DiscoveredInstance(testId: fp, name: "m", project: "p", fingerprint: fp, serviceName: "mads-\(fp.prefix(12))")
         let old = DiscoveredInstance(testId: fp, name: "m", project: "p", fingerprint: fp, serviceName: "mads-4242")
-        #expect(live.isFingerprintNamed)
-        #expect(!old.isFingerprintNamed)
+        let iidNamed = DiscoveredInstance(testId: "abc123abc123", name: "m", project: "p", fingerprint: fp,
+                                          serviceName: "mads-abc123abc123", instanceId: "abc123abc123")
+        #expect(live.isStablyNamed)
+        #expect(!old.isStablyNamed)
+        #expect(iidNamed.isStablyNamed)
+    }
+
+    /// Zwei parallel offene Projekte desselben Macs teilen sich jetzt den Host-fp. Sie dürfen NICHT
+    /// zu einem Eintrag verschmelzen (das war der Grund für die `iid`) — und der Keychain-Schlüssel
+    /// muss für beide der gemeinsame Host-fp sein, damit eine Kopplung für beide gilt.
+    @Test func projectsShareHostFingerprintButStaySeparateEntries() {
+        let fp = String(repeating: "d", count: 64)
+        let a = DiscoveredInstance(testId: "aaaaaaaaaaaa", name: "A", project: "a", fingerprint: fp,
+                                   serviceName: "mads-aaaaaaaaaaaa", instanceId: "aaaaaaaaaaaa")
+        let b = DiscoveredInstance(testId: "bbbbbbbbbbbb", name: "B", project: "b", fingerprint: fp,
+                                   serviceName: "mads-bbbbbbbbbbbb", instanceId: "bbbbbbbbbbbb")
+        #expect(DiscoveredInstance.dedupePreferringLive([a, b]).count == 2)
+        #expect(a.credentialKey == b.credentialKey)
+        #expect(a.credentialKey == fp)
     }
 }

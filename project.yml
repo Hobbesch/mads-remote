@@ -64,3 +64,18 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.powerblox.mads-remote.tests
         GENERATE_INFOPLIST_FILE: YES
         CODE_SIGNING_ALLOWED: NO
+
+# Scheme für `make build` / `make test` (xcodebuild braucht ein Scheme; ohne diesen Block generiert
+# xcodegen keins und beide Ziele scheitern mit „does not contain a scheme").
+schemes:
+  mads-remote:
+    build:
+      targets:
+        mads-remote: all
+        mads-remoteTests: [test]
+    run:
+      config: Debug
+    test:
+      config: Debug
+      targets:
+        - mads-remoteTests

@@ -46,7 +46,7 @@ final class InstanceSession {
             phase = .failed("Instanz nicht erreichbar"); return
         }
         // Gepinnter fp (Keychain, autoritativ) oder beim ersten Pairing der TXT-Hinweis (TOFU).
-        guard let fp = KeychainStore.pinnedFingerprint(instanceId: instance.id) ?? instance.fingerprint else {
+        guard let fp = KeychainStore.pinnedFingerprint(instanceId: instance.credentialKey) ?? instance.fingerprint else {
             phase = .failed("Kein Server-Fingerprint verfügbar"); return
         }
 
@@ -125,7 +125,7 @@ final class InstanceSession {
     /// Sackgassen-Zustand, in dem „Erneut versuchen" nur den toten Token wiederholt.
     func repair() async {
         await disconnect()
-        KeychainStore.forgetToken(instanceId: instance.id)
+        KeychainStore.forgetToken(instanceId: instance.credentialKey)
         await start()
     }
 
@@ -277,7 +277,7 @@ final class InstanceSession {
         switch event {
         case .connected:
             // Verbindung steht WIRKLICH → jetzt erst Auth (Token vorhanden) oder Pairing anzeigen.
-            if let token = KeychainStore.token(instanceId: instance.id) {
+            if let token = KeychainStore.token(instanceId: instance.credentialKey) {
                 armWatchdog()                                       // Auth-Antwort in 8 s absichern
                 try? await connection?.authenticate(token: token)   // bleibt .connecting bis .authenticated
             } else {
@@ -287,7 +287,11 @@ final class InstanceSession {
         case .paired(let token, _):
             // Beim ersten Pairing den (TOFU-)fp mit dem Token pinnen.
             cancelWatchdog()
-            KeychainStore.saveCredentials(instanceId: instance.id, token: token, fingerprint: tofuFingerprint)
+            if !KeychainStore.saveCredentials(instanceId: instance.credentialKey, token: token, fingerprint: tofuFingerprint) {
+                // Sichtbar machen statt schlucken: sonst wird die Sitzung live, verlangt beim
+                // nächsten Verbinden aber wieder ein Pairing, ohne dass irgendwo ein Grund steht.
+                store.noteError("Geräte-Token konnte nicht in der Keychain gespeichert werden — beim nächsten Verbinden ist erneutes Koppeln nötig.")
+            }
             await requestSnapshot()
             phase = .live
         case .authenticated:

@@ -43,7 +43,14 @@ Service `_mads-remote._tcp`, ein Service pro Instanz, TXT-Keys:
 | `pid` | Prozess-ID |
 | `project` | `repoRoot`-Basename |
 | `pv` | `PROTOCOL_VERSION` |
-| `fp` | TLS-SPKI-Fingerprint (nur **Hinweis** — autoritativ ist der beim Pairing gepinnte fp) |
+| `fp` | TLS-SPKI-Fingerprint des **Hosts** (nur **Hinweis** — autoritativ ist der beim Pairing gepinnte fp). Für alle Instanzen desselben Macs identisch. |
+| `iid` | Identität **dieses Projekts** (SHA-256 des Repo-Roots, 12 Hex). Trägt auch den Service-Instanznamen `mads-<iid>`. |
+
+**Zwei Identitäts-Ebenen.** Zertifikat und Geräte-DB liegen im Host (`<appData>/mads/remote-bridge/`),
+nicht im Repo: eine Kopplung gilt daher für **alle** Projekte desselben Macs, und der Token liegt auf
+dem Gerät unter dem `fp`. Weil damit alle Instanzen denselben `fp` annoncieren, unterscheidet die App
+parallel offene Projekte über `iid`. Ältere mads-Versionen senden kein `iid` — dann bleibt der `fp`
+die Instanz-Identität (Rückwärtskompatibilität).
 
 ## Implementierungs-Status (mads-Repo, Branch `feat/remote-bridge`)
 
