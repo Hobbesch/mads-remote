@@ -33,16 +33,7 @@ final class InstanceSession {
         switch phase { case .idle, .failed: break; default: return }
         phase = .resolving
 
-        // Bevorzugt die im TXT annoncierte LAN-IP (deterministisch, keine Zone) — die fragile
-        // Bonjour-Auflösung liefert auf einem USB-verbundenen iPad die unbrauchbare link-local
-        // Adresse. Fallback: doch auflösen, falls kein addr/port im TXT stand.
-        let resolved: (host: String, port: UInt16)?
-        if let directHost = instance.directHost, let directPort = instance.directPort {
-            resolved = (host: directHost, port: directPort)
-        } else {
-            resolved = await BonjourResolver.resolve(instance.endpoint)
-        }
-        guard let (host, port) = resolved else {
+        guard let (host, port) = await resolveEndpoint() else {
             phase = .failed("Instanz nicht erreichbar"); return
         }
         // Gepinnter fp (Keychain, autoritativ) oder beim ersten Pairing der TXT-Hinweis (TOFU).
@@ -60,6 +51,42 @@ final class InstanceSession {
         await conn.connect()
         armWatchdog()
     }
+
+    /// Die zu verbindende Adresse bestimmen.
+    ///
+    /// Erste Wahl bleibt die im TXT annoncierte LAN-IP (`addr`/`port`): deterministisch, ohne Zone,
+    /// und sie umgeht die fragile Bonjour-Auflösung, die auf einem USB-verbundenen iPad die
+    /// unbrauchbare link-local Adresse liefert.
+    ///
+    /// Sie kann aber VERALTET sein — die Bridge schreibt `addr` einmal beim Start und zieht es bei
+    /// einem Netz-/IP-Wechsel des Macs nicht nach. Dann zeigte die App 8 s lang „Verbinde …" und
+    /// danach „Nicht verbunden", obwohl die Instanz die ganze Zeit erreichbar war.
+    ///
+    /// Zweite Wahl ist deshalb der mDNS-HOSTNAME: dessen A-Record hält die Bridge über
+    /// `enable_addr_auto()` aktuell, und er trägt — anders als eine aufgelöste Link-Local-Adresse —
+    /// keine Interface-Zone, an der `URLSession` mit `-1002 „URL nicht unterstützt"` aussteigt.
+    /// Letzte Wahl bleibt die Bonjour-Auflösung.
+    ///
+    /// Jeder Kandidat wird kurz angeklopft, statt blind eine URL zu bauen — so kostet ein toter
+    /// Eintrag zwei Sekunden statt der vollen acht des Watchdogs. Ein falsch aufgelöster Host kann
+    /// nicht stillschweigend durchgehen: das SPKI-Pinning schlägt danach hörbar fehl.
+    private func resolveEndpoint() async -> (host: String, port: UInt16)? {
+        if let port = instance.directPort {
+            if let addr = instance.directHost, await TCPProbe.reachable(host: addr, port: port) {
+                return (host: addr, port: port)
+            }
+            let hostname = instance.advertisedHost ?? Self.bridgeHostname
+            if await TCPProbe.reachable(host: hostname, port: port) {
+                return (host: hostname, port: port)
+            }
+        }
+        return await BonjourResolver.resolve(instance.endpoint)
+    }
+
+    /// Der mDNS-Hostname, unter dem JEDE mads-Bridge ihren Service annonciert (`advertise()` in
+    /// `bridge.rs` setzt ihn fest). Nur Rückfall für mads-Versionen, die den dokumentierten
+    /// TXT-Key `host` noch nicht senden — sobald er im TXT steht, gewinnt der annoncierte Wert.
+    private static let bridgeHostname = "mads-remote.local"
 
     /// Frischen 8-s-Watchdog für die laufende `.connecting`-Runde bewaffnen (Aufbau/Auth/Pairing).
     /// Feuert nur, wenn wir dann NOCH `.connecting` sind — jeder Übergang in einen Ruhezustand

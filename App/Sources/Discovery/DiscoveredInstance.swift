@@ -11,6 +11,10 @@ struct DiscoveredInstance: Identifiable, Hashable, Sendable {
     let fingerprint: String?      // TXT "fp" = SPKI-Pin des HOSTS (nur Hinweis; autoritativ ist der gepinnte fp)
     let directHost: String?   // TXT "addr" = annoncierte LAN-IP (umgeht die fragile Auflösung)
     let directPort: UInt16?   // TXT "port"
+    /// TXT "host" = mDNS-Hostname der Bridge. Rückfall, wenn `addr` veraltet ist: der A-Record
+    /// dahinter bleibt bei einem IP-Wechsel des Macs aktuell, die TXT-Kopie `addr` nicht. Ältere
+    /// mads-Versionen senden den Key nicht (dokumentiert, aber nie implementiert) → `bridgeHostname`.
+    let advertisedHost: String?
     let serviceName: String   // roher Bonjour-Instanzname ("mads-<iid>" neu / "mads-<fp12>"/"mads-<pid>" alt)
     let txtInstanceId: String?    // TXT "iid" = Projekt-Identität (fehlt bei älteren mads-Versionen)
     let endpoint: NWEndpoint
@@ -39,6 +43,7 @@ struct DiscoveredInstance: Identifiable, Hashable, Sendable {
         self.fingerprint = f.fp
         self.directHost = txt["addr"].flatMap { $0.isEmpty ? nil : $0 }
         self.directPort = txt["port"].flatMap { UInt16($0) }
+        self.advertisedHost = txt["host"].flatMap { $0.isEmpty ? nil : $0 }
         self.serviceName = serviceName
         self.txtInstanceId = f.iid
         self.endpoint = result.endpoint
@@ -106,7 +111,7 @@ struct DiscoveredInstance: Identifiable, Hashable, Sendable {
 extension DiscoveredInstance {
     /// Nur für Tests: konstruiert eine Instanz ohne `NWBrowser.Result`.
     init(testId: String, name: String, project: String, fingerprint: String?, serviceName: String? = nil,
-         instanceId: String? = nil, host: String? = nil, port: UInt16? = nil) {
+         instanceId: String? = nil, host: String? = nil, port: UInt16? = nil, advertisedHost: String? = nil) {
         self.id = testId
         self.name = name
         self.project = project
@@ -115,6 +120,7 @@ extension DiscoveredInstance {
         self.fingerprint = fingerprint
         self.directHost = host
         self.directPort = port
+        self.advertisedHost = advertisedHost
         self.serviceName = serviceName ?? testId
         self.txtInstanceId = instanceId
         self.endpoint = .hostPort(host: "127.0.0.1", port: 1)
