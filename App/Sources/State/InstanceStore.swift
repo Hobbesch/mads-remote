@@ -17,6 +17,27 @@ struct Stream: Identifiable, Sendable {
     var syncBlocked: Bool?
     var pr: PullRequestInfo?
     var timeline: [TimelineItem] = []
+    /// Teil-Agenten dieses Streams: toolUseId des `Task`/`Agent`-Aufrufs → Anzeigename. Reine
+    /// Laufzeit-Anzeige, damit die Werkzeug-Aufrufe eines Teil-Agenten zuordenbar sind.
+    var subAgents: [String: String] = [:]
+}
+
+/// Eine Werkzeug-Karte der Timeline — dieselben Felder wie die mads-Timeline am Mac
+/// (`TimelineEvent` kind „tool" in `src/store.ts`): Name, mitgelieferte Beschreibung, das Argument
+/// (IN), das Ergebnis (OUT) und der Status. Vorher trug die Karte nur den Namen — daher die
+/// endlose Reihe inhaltsloser „Bash"-Zeilen.
+struct ToolCard: Sendable, Hashable {
+    let toolUseId: String
+    let name: String
+    /// Die vom Tool MITGELIEFERTE Klartext-Beschreibung (Bash & Co. setzen sie) — wie am Mac. Die
+    /// abgeleitete Satz-Fassung (`ToolText.description`) gehört auf die Berechtigungskarte.
+    var description: String? = nil
+    var command: String? = nil      // IN
+    var output: String? = nil       // OUT
+    var ok: Bool? = nil
+    var running: Bool = true
+    /// Name des Teil-Agenten, der das Werkzeug aufrief (nil = der Stream selbst).
+    var viaSubAgent: String? = nil
 }
 
 /// Ein Timeline-Eintrag mit stabiler, monoton steigender ID (für SwiftUI-`ForEach`).
@@ -25,9 +46,10 @@ struct TimelineItem: Identifiable, Sendable {
     var kind: Kind
     enum Kind: Sendable {
         case user(String, [TimelineAttachment])  // Anweisung vom Menschen (+ Bild-Anhänge als Thumbnails)
-        case assistant(String)
-        case thinking(String)
-        case tool(id: String, name: String, ok: Bool?)
+        case assistant(String, viaSubAgent: String? = nil)
+        case thinking(String, viaSubAgent: String? = nil)
+        case tool(ToolCard)
+        case todos([TodoItem])
         case notice(String)
     }
 }
@@ -76,8 +98,10 @@ final class InstanceStore {
         case .agentTimeline(let id, let events):
             // Snapshot-Replay: Timeline dieses Agenten aus dem Verlauf NEU aufbauen (Basis leeren,
             // dann in Reihenfolge anwenden — tool_result trifft so die im Replay erzeugte Karte).
-            // Idempotent: spätere Live-Events hängen strikt danach an (kein Duplikat).
-            mutate(id) { $0.timeline = [] }
+            // Idempotent: spätere Live-Events hängen strikt danach an (kein Duplikat). Die
+            // Teil-Agenten-Namen werden mit zurückgesetzt — der Replay trägt ihre `Task`-Aufrufe
+            // erneut, und alte Einträge würden sonst über die neue Timeline hinaus bestehen.
+            mutate(id) { $0.timeline = []; $0.subAgents = [:] }
             for event in events { applyAgentEvent(id, event) }
         case .agentDone(let id, _, let isError):
             mutate(id) { $0.status = isError ? .error : .done }
@@ -117,12 +141,14 @@ final class InstanceStore {
     }
 
     /// Lokale Benachrichtigung mit Ton für eine NEUE Berechtigungsfrage/Rückfrage. Titel = Stream-Name,
-    /// Body = Tool bzw. (bei AskUserQuestion) die Frage — kurz genug fürs Sperrbild-Banner.
+    /// Body = WAS freigegeben werden soll bzw. (bei AskUserQuestion) die Frage — kurz genug fürs
+    /// Sperrbild-Banner. Vorher stand dort nur der Tool-Name („Bash braucht deine Erlaubnis"), was
+    /// nichts darüber sagte, worum es geht; jetzt derselbe Satz wie im Desktop-Dialog.
     private func notifyPermission(_ req: PermissionRequestInfo) {
         let stream = streams[req.agentId]?.label ?? req.agentId
         let body = req.kind == "ask_user_question"
             ? (req.questions?.first?.question ?? "Rückfrage zur aktuellen Arbeit")
-            : "\(req.toolName) braucht deine Erlaubnis"
+            : req.summary
         LocalNotifications.notify(title: "\(stream) braucht eine Entscheidung", body: body, identifier: req.requestId)
     }
 
@@ -143,12 +169,46 @@ final class InstanceStore {
     private func applyAgentEvent(_ id: String, _ event: AgentEvent) {
         switch event {
         case .userText(let t, let atts): pushTimeline(id, .user(t, atts))
-        case .assistantText(let t): pushTimeline(id, .assistant(t))
-        case .thinking(let t): pushTimeline(id, .thinking(t))
-        case .toolUse(let uid, let name): pushTimeline(id, .tool(id: uid, name: name, ok: nil))
-        case .toolResult(let uid, let ok, _): updateTool(id, uid, ok: ok)
+        case .assistantText(let t, let parent): pushTimeline(id, .assistant(t, viaSubAgent: subAgentName(id, parent)))
+        case .thinking(let t, let parent): pushTimeline(id, .thinking(t, viaSubAgent: subAgentName(id, parent)))
+        case .toolUse(let uid, let name, let input, let parent):
+            applyToolUse(id, toolUseId: uid, name: name, input: input, parentToolUseId: parent)
+        case .toolResult(let uid, let ok, let summary, let output, _):
+            // Wie am Mac: das volle Ergebnis, sonst die Kurzfassung.
+            completeTool(id, uid, output: output ?? summary, ok: ok)
         case .assistantDelta, .system, .unknown: break // Deltas/System spiegeln wir (noch) nicht
         }
+    }
+
+    /// Ein Werkzeug-Aufruf: To-do-Listen werden zur To-do-Karte, `Task`/`Agent` startet zusätzlich
+    /// einen Teil-Agenten, alles andere wird eine Werkzeug-Karte mit Argument (IN).
+    private func applyToolUse(
+        _ id: String, toolUseId: String, name: String, input: [String: JSONValue], parentToolUseId: String?
+    ) {
+        if name == "Task" || name == "Agent" {
+            // Namen des Teil-Agenten merken, BEVOR seine Aufrufe eintreffen — sonst stünde dort „Teil-Agent".
+            let label = ToolText.subAgentLabel(input)
+            mutate(id) { $0.subAgents[toolUseId] = label }
+        }
+        if name == "TodoWrite", let todos = ToolText.todos(input) {
+            pushTimeline(id, .todos(todos))
+            return
+        }
+        pushTimeline(id, .tool(ToolCard(
+            toolUseId: toolUseId,
+            name: name,
+            description: input["description"]?.stringValue,
+            command: ToolText.command(input),
+            running: true,
+            viaSubAgent: subAgentName(id, parentToolUseId))))
+    }
+
+    /// Anzeigename des Teil-Agenten zu einer parentToolUseId (nil = Hauptloop). Unbekannt (z. B. der
+    /// `Task`-Aufruf fiel aus dem Ringpuffer) → neutrales „Teil-Agent", damit die Herkunft trotzdem
+    /// sichtbar bleibt.
+    private func subAgentName(_ id: String, _ parentToolUseId: String?) -> String? {
+        guard let parent = parentToolUseId else { return nil }
+        return streams[id]?.subAgents[parent] ?? "Teil-Agent"
     }
 
     private func pushTimeline(_ id: String, _ kind: TimelineItem.Kind) {
@@ -162,13 +222,24 @@ final class InstanceStore {
         }
     }
 
-    /// tool_result aktualisiert die passende (jüngste) tool_use-Karte statt eine neue anzuhängen.
-    private func updateTool(_ id: String, _ uid: String, ok: Bool) {
+    /// tool_result vervollständigt die passende (jüngste) tool_use-Karte mit Ergebnis und Status,
+    /// statt eine neue anzuhängen.
+    private func completeTool(_ id: String, _ uid: String, output: String?, ok: Bool) {
+        var updated = false
         mutate(id) { s in
             guard let idx = s.timeline.lastIndex(where: {
-                if case .tool(let tid, _, _) = $0.kind { return tid == uid } else { return false }
-            }), case .tool(let tid, let name, _) = s.timeline[idx].kind else { return }
-            s.timeline[idx].kind = .tool(id: tid, name: name, ok: ok)
+                if case .tool(let card) = $0.kind { return card.toolUseId == uid } else { return false }
+            }), case .tool(var card) = s.timeline[idx].kind else { return }
+            card.output = output
+            card.ok = ok
+            card.running = false
+            s.timeline[idx].kind = .tool(card)
+            updated = true
+        }
+        // Ergebnis ohne zugehörigen Aufruf (Ringpuffer übergelaufen) → eigene Karte, statt es
+        // stillschweigend zu verlieren. Gleiches Verhalten wie am Mac.
+        if !updated {
+            pushTimeline(id, .tool(ToolCard(toolUseId: uid, name: "Tool", output: output, ok: ok, running: false)))
         }
     }
 

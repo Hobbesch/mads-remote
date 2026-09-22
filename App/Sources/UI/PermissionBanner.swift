@@ -14,51 +14,151 @@ struct PermissionBanner: View {
 
     var body: some View {
         ForEach(requests, id: \.requestId) { req in
-            VStack(alignment: .leading, spacing: 8) {
-                Label("Berechtigung angefragt", systemImage: "exclamationmark.shield.fill")
-                    .font(.subheadline).bold()
-                Text("Stream \(req.agentId) — Tool: \(req.toolName)")
-                    .font(.callout)
+            PermissionCard(session: session, req: req, streamLabel: session.store.streams[req.agentId]?.label)
+        }
+    }
+}
+
+/// Eine Anfrage-Karte mit demselben Informationsgehalt wie der Desktop-Dialog (`PermissionDialog.tsx`):
+/// WER fragt (Stream-Name statt roher id), WAS getan werden soll (abgeleiteter Satz), der ROHE
+/// Befehl/Pfad, warum gefragt wird und welche Befehls-Kategorie betroffen ist.
+private struct PermissionCard: View {
+    let session: InstanceSession
+    let req: PermissionRequestInfo
+    let streamLabel: String?
+
+    @State private var expanded = false
+
+    /// Menschliche Labels der Bash-Kategorien (Port von `shared/safe-command.ts`). Sie stehen am Mac
+    /// im „Immer erlauben"-Knopf; hier sind sie die Einordnung der Aktion.
+    private static let kindLabels: [String: String] = [
+        "danger": "destruktive Befehle",
+        "outward": "Push/PR/Merge nach aussen",
+        "network": "Netzwerkzugriff nach aussen",
+        "pkg": "Paket-/Dienst-Verwaltung",
+        "secret": "Zugriff auf Secrets/Config",
+        "git": "Git-Fernaktionen (lesend)",
+        "write": "Schreiben ausserhalb des Projekts",
+        "tool": "dieses Tool",
+    ]
+
+    /// Kategorien, die der Desktop „merken" darf (`REMEMBERABLE_KINDS` + `tool`). Aus der Ferne gibt
+    /// es das bewusst NICHT: die Bridge streicht `decision.remember` aus jeder Antwort (RB-AUTH-1),
+    /// eine dauerhafte Freigabe wäre sonst eine Remote-RCE. Ein Hinweis erklärt den fehlenden Knopf.
+    private static let rememberableKinds: Set<String> = ["tool", "network", "pkg", "secret", "git", "write"]
+
+    private var isQuestion: Bool { req.kind == "ask_user_question" }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            header
+            if isQuestion, let questions = req.questions, !questions.isEmpty {
+                // Rückfrage MIT übermittelten Optionen → aus der Ferne beantworten.
+                QuestionForm(session: session, req: req, questions: questions)
+            } else if isQuestion {
+                // Rückfrage ohne Optionen (alte mads-Version / kaputte Payload) → nur ablehnbar.
+                Text("Rückfrage ohne übermittelte Optionen — hier nur ablehnbar.")
+                    .font(.caption)
                     .foregroundStyle(.secondary)
-
-                if req.kind == "ask_user_question", let questions = req.questions, !questions.isEmpty {
-                    // Rückfrage MIT übermittelten Optionen → aus der Ferne beantworten.
-                    QuestionForm(session: session, req: req, questions: questions)
-                } else if req.kind == "ask_user_question" {
-                    // Rückfrage ohne Optionen (alte mads-Version / kaputte Payload) → nur ablehnbar.
-                    Text("Rückfrage ohne übermittelte Optionen — hier nur ablehnbar.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Button(role: .destructive) {
-                        Task { await session.answerPermission(agentId: req.agentId, requestId: req.requestId, allow: false) }
+                denyButton.buttonStyle(.bordered)
+            } else {
+                toolDetails
+                HStack {
+                    denyButton.buttonStyle(.bordered)
+                    Button {
+                        Task { await session.answerPermission(agentId: req.agentId, requestId: req.requestId, allow: true) }
                     } label: {
-                        Text("Ablehnen").frame(maxWidth: .infinity)
+                        Text("Erlauben").frame(maxWidth: .infinity)
                     }
-                    .buttonStyle(.bordered)
-                } else {
-                    // Tool-Erlaubnis: Ablehnen / Erlauben.
-                    HStack {
-                        Button(role: .destructive) {
-                            Task { await session.answerPermission(agentId: req.agentId, requestId: req.requestId, allow: false) }
-                        } label: {
-                            Text("Ablehnen").frame(maxWidth: .infinity)
-                        }
-                        .buttonStyle(.bordered)
-
-                        Button {
-                            Task { await session.answerPermission(agentId: req.agentId, requestId: req.requestId, allow: true) }
-                        } label: {
-                            Text("Erlauben").frame(maxWidth: .infinity)
-                        }
-                        .buttonStyle(.borderedProminent)
-                    }
+                    .buttonStyle(.borderedProminent)
                 }
             }
-            .padding()
-            .background(Color.orange.opacity(0.15), in: RoundedRectangle(cornerRadius: 12))
-            .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Color.orange.opacity(0.4)))
-            .padding(.horizontal)
-            .padding(.top, 8)
+        }
+        .padding()
+        .background(Color.orange.opacity(0.15), in: RoundedRectangle(cornerRadius: 12))
+        .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Color.orange.opacity(0.4)))
+        .padding(.horizontal)
+        .padding(.top, 8)
+    }
+
+    private var header: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Label("\(streamLabel ?? req.agentId) braucht eine Entscheidung", systemImage: "exclamationmark.shield.fill")
+                .font(.subheadline).bold()
+            Text(isQuestion ? "Rückfrage" : "Tool-Erlaubnis · \(req.toolName)")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    /// Der Inhalt, der bisher fehlte: was getan werden soll, der rohe Befehl, der Grund der Rückfrage.
+    @ViewBuilder private var toolDetails: some View {
+        Text(req.summary)
+            .font(.callout)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+        if let command = req.command, !command.isEmpty, command != req.summary {
+            Text(command)
+                .font(.system(.caption2, design: .monospaced))
+                .textSelection(.enabled)
+                .lineLimit(expanded ? nil : 8)   // ein Write-Input kann eine ganze Datei sein
+                .truncationMode(.tail)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(7)
+                .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 7))
+                .onTapGesture { expanded.toggle() }
+                .accessibilityHint(expanded ? "Tippen zum Einklappen" : "Tippen zum vollständig Anzeigen")
+        }
+
+        if let reason = req.decisionReason, !reason.isEmpty {
+            detailLine(reason)
+        }
+        if let path = req.blockedPath, !path.isEmpty {
+            detailLine("Pfad: \(path)")
+        }
+        if let kind = req.commandKind, let label = Self.kindLabels[kind] {
+            HStack(spacing: 6) {
+                Text(label)
+                    .font(.caption2)
+                    .padding(.horizontal, 7).padding(.vertical, 2)
+                    .background(kindTint(kind).opacity(0.18), in: Capsule())
+                    .foregroundStyle(kindTint(kind))
+                Spacer(minLength: 0)
+            }
+            if Self.rememberableKinds.contains(kind) {
+                // Erklärt, warum hier ein Knopf fehlt, den der Mac hat — statt ihn wirkungslos anzubieten.
+                Text("„Immer erlauben“ nur am Mac — aus der Ferne bewusst gesperrt.")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+        }
+    }
+
+    private func detailLine(_ text: String) -> some View {
+        Text(text)
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// `danger`/`outward` optisch hervorheben — das sind die Fälle, die man auf dem Handy nicht
+    /// beiläufig durchwinken soll.
+    private func kindTint(_ kind: String) -> Color {
+        switch kind {
+        case "danger": return .red
+        case "outward", "secret": return .orange
+        default: return .secondary
+        }
+    }
+
+    private var denyButton: some View {
+        Button(role: .destructive) {
+            Task { await session.answerPermission(agentId: req.agentId, requestId: req.requestId, allow: false) }
+        } label: {
+            Text("Ablehnen").frame(maxWidth: .infinity)
         }
     }
 }

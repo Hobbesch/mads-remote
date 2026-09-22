@@ -261,6 +261,11 @@ Reihenfolge: **Bridge zuerst** (gewählt) — P0.2 ist das kleinste wertvolle In
   „Notifications nur solange die App läuft" (bzw. im Kurz-Hintergrund). Echtes
   Background-Escalation würde APNs erfordern → bricht das No-Cloud-Nicht-Ziel. Rückstellbar auf später.
 - **Reichweite:** rein LAN. Fern-Zugriff nur über nutzereigenes VPN, kein eigener Relay-Dienst.
+- **„Immer erlauben" gibt es nur am Mac.** Die Bridge streicht `decision.remember` aus jeder
+  Remote-Antwort (Sicherheitsregel RB-AUTH-1 in `bridge.rs`): eine dauerhafte Auto-Freigabe aus der
+  Ferne wäre eine Remote-RCE, die die `permissionMode`-Allow-Liste umginge. Die Karte in der App
+  bietet den Knopf deshalb **nicht** an und sagt das bei merkbaren Kategorien dazu, statt ihn
+  wirkungslos anzuzeigen. Interaktives Erlauben/Ablehnen/Antworten bleibt unverändert möglich.
 - **Auth v1:** Bearer-Token (widerrufbar). **mTLS** ist die dokumentierte stärkere Aufrüstung
   (per-Frame-Auth automatisch auf TLS-Ebene, Widerruf = Zertifikat sperren) — nachrüstbar.
 - **Context7:** in dieser Session nicht als MCP verbunden; Framework-Stand wurde über

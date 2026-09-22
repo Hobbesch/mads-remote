@@ -46,13 +46,17 @@ struct PullRequestInfo: Codable, Sendable, Hashable {
     let checksState: String?
 }
 
+/// `parentToolUseId` (auf allen Arten, die ein Teil-Agent erzeugen kann): gesetzt, wenn das Event
+/// aus einem SUB-AGENTEN (Task/Agent-Tool) stammt — dann ist es die toolUseId des Task-Aufrufs, der
+/// ihn startete. Ohne die Marke sieht ein Werkzeug-Aufruf eines Teil-Agenten in der Timeline
+/// genauso aus wie einer des Streams selbst (derselbe Befund wie im mads-Frontend).
 enum AgentEvent: Sendable {
     case userText(text: String, attachments: [TimelineAttachment])  // Anweisung vom Menschen (Mac ODER Remote)
-    case assistantText(String)
+    case assistantText(String, parentToolUseId: String? = nil)
     case assistantDelta(String)
-    case thinking(String)
-    case toolUse(toolUseId: String, name: String)
-    case toolResult(toolUseId: String, ok: Bool, summary: String?)
+    case thinking(String, parentToolUseId: String? = nil)
+    case toolUse(toolUseId: String, name: String, input: [String: JSONValue] = [:], parentToolUseId: String? = nil)
+    case toolResult(toolUseId: String, ok: Bool, summary: String? = nil, output: String? = nil, parentToolUseId: String? = nil)
     case system(subtype: String)
     case unknown(kind: String)
 }
@@ -66,12 +70,27 @@ struct TimelineAttachment: Codable, Sendable, Hashable, Identifiable {
     var thumbBase64: String? = nil
 }
 
-struct PermissionRequestInfo: Codable, Sendable, Hashable {
+struct PermissionRequestInfo: Sendable, Hashable {
     let agentId: String
     let requestId: String
     let toolName: String
     let kind: String         // tool | ask_user_question
+    /// Der ROHE Werkzeug-Input (Befehl, Pfad, Suchmuster …). Ohne ihn stand auf der Karte nur der
+    /// Tool-Name — man sollte also „Bash" freigeben, ohne den Befehl zu kennen.
+    var input: [String: JSONValue] = [:]
+    /// Warum Claude Code fragt (z. B. „Befehl schreibt ausserhalb des Worktrees").
+    var decisionReason: String? = nil
+    /// Der Pfad, an dem die Freigabe hängt (bei Datei-Tools).
+    var blockedPath: String? = nil
+    /// Bash-Kategorie (network/pkg/secret/git/write/danger/outward) — hier nur zur Einordnung
+    /// ANGEZEIGT: „Immer erlauben" gibt es auf dem Gerät bewusst nicht, siehe `PermissionBanner`.
+    var commandKind: String? = nil
     var questions: [AskQuestion]? = nil   // nur bei ask_user_question: Fragen samt Optionen (zum Beantworten aus der Ferne)
+
+    /// Ein Satz, der erklärt, was freigegeben werden soll — identisch zum Desktop-Dialog.
+    var summary: String { ToolText.description(tool: toolName, input: input) }
+    /// Der rohe Befehl/Pfad für die Code-Zeile der Karte.
+    var command: String? { ToolText.command(input) }
 }
 
 /// Eine Antwort-Option einer AskUserQuestion-Frage (Label + Erklärung).
@@ -94,32 +113,44 @@ private enum MsgKey: String, CodingKey {
     case type, agentId, status, currentStep, totalCostUsd, numTurns, inputTokens, outputTokens
     case behind, ahead, dirty, syncBlocked, pr, event, events, reason, message, subtype, isError
     case scope, code, recoverable, project, requestId, requestIds, toolName, kind, label, role, questions
+    case input, decisionReason, blockedPath, commandKind
 }
 
 extension AgentEvent: Decodable {
-    private enum K: String, CodingKey { case kind, text, toolUseId, name, ok, summary, subtype, attachments }
+    private enum K: String, CodingKey {
+        case kind, text, toolUseId, name, ok, summary, output, subtype, attachments, input, parentToolUseId
+    }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: K.self)
         let kind = try c.decodeIfPresent(String.self, forKey: .kind) ?? "unknown"
+        // Input/Parent tolerant dekodieren: ein unerwartetes Feld darf die Nachricht nie sprengen —
+        // lieber eine Karte ohne Detail als eine verworfene Zeile.
+        let parent = (try? c.decodeIfPresent(String.self, forKey: .parentToolUseId)) ?? nil
         switch kind {
         case "user_text":
             // Anhänge tolerant dekodieren: ein kaputter Anhang darf die Nachricht nicht sprengen.
             self = .userText(
                 text: try c.decodeIfPresent(String.self, forKey: .text) ?? "",
                 attachments: ((try? c.decodeIfPresent([TimelineAttachment].self, forKey: .attachments)) ?? nil) ?? [])
-        case "assistant_text": self = .assistantText(try c.decodeIfPresent(String.self, forKey: .text) ?? "")
+        case "assistant_text":
+            self = .assistantText(try c.decodeIfPresent(String.self, forKey: .text) ?? "", parentToolUseId: parent)
         case "assistant_delta": self = .assistantDelta(try c.decodeIfPresent(String.self, forKey: .text) ?? "")
-        case "thinking": self = .thinking(try c.decodeIfPresent(String.self, forKey: .text) ?? "")
+        case "thinking":
+            self = .thinking(try c.decodeIfPresent(String.self, forKey: .text) ?? "", parentToolUseId: parent)
         case "tool_use":
             self = .toolUse(
                 toolUseId: try c.decodeIfPresent(String.self, forKey: .toolUseId) ?? "",
-                name: try c.decodeIfPresent(String.self, forKey: .name) ?? "")
+                name: try c.decodeIfPresent(String.self, forKey: .name) ?? "",
+                input: ((try? c.decodeIfPresent([String: JSONValue].self, forKey: .input)) ?? nil) ?? [:],
+                parentToolUseId: parent)
         case "tool_result":
             self = .toolResult(
                 toolUseId: try c.decodeIfPresent(String.self, forKey: .toolUseId) ?? "",
                 ok: try c.decodeIfPresent(Bool.self, forKey: .ok) ?? false,
-                summary: try c.decodeIfPresent(String.self, forKey: .summary))
+                summary: try c.decodeIfPresent(String.self, forKey: .summary),
+                output: try c.decodeIfPresent(String.self, forKey: .output),
+                parentToolUseId: parent)
         case "system": self = .system(subtype: try c.decodeIfPresent(String.self, forKey: .subtype) ?? "")
         default: self = .unknown(kind: kind)
         }
@@ -176,6 +207,12 @@ extension SidecarMessage: Decodable {
                 requestId: try c.decodeIfPresent(String.self, forKey: .requestId) ?? "",
                 toolName: try c.decodeIfPresent(String.self, forKey: .toolName) ?? "",
                 kind: try c.decodeIfPresent(String.self, forKey: .kind) ?? "tool",
+                // Input tolerant dekodieren: ein unerwarteter Wert darf die Anfrage nicht verwerfen —
+                // sonst verschwände die ganze Karte und der Stream bliebe ohne Entscheidung hängen.
+                input: ((try? c.decodeIfPresent([String: JSONValue].self, forKey: .input)) ?? nil) ?? [:],
+                decisionReason: try c.decodeIfPresent(String.self, forKey: .decisionReason),
+                blockedPath: try c.decodeIfPresent(String.self, forKey: .blockedPath),
+                commandKind: try c.decodeIfPresent(String.self, forKey: .commandKind),
                 // Fragen tolerant dekodieren: kaputte/fehlende Optionen dürfen die Nachricht nicht sprengen
                 // (Fallback im UI = „nur ablehnbar").
                 questions: (try? c.decodeIfPresent([AskQuestion].self, forKey: .questions)) ?? nil))

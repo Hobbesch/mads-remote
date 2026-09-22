@@ -49,6 +49,16 @@ struct StreamDetailView: View {
                         ForEach(stream.timeline) { item in
                             TimelineItemView(item: item)
                         }
+                        // Läuft gerade etwas? Dann unten zeigen WORAN — wie die Arbeitszeile am Ende
+                        // der mads-Timeline. Ohne sie wirkt ein arbeitender Stream auf dem Handy tot.
+                        if isStreamActive {
+                            HStack(spacing: 8) {
+                                ProgressView().controlSize(.mini)
+                                Text(stepLabel(stream))
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
                         Color.clear.frame(height: 1).id(bottomID) // Scroll-Anker am Ende
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -107,6 +117,15 @@ struct StreamDetailView: View {
     /// Arbeitet der Stream gerade aktiv (läuft ein Turn)? Dann ist ein Unterbrechen sinnvoll.
     private var isStreamActive: Bool {
         stream?.status == .running || stream?.status == .starting
+    }
+
+    /// Der aktuelle Arbeitsschritt für die Zeile am Ende der Timeline (gleiche Regel wie in mads:
+    /// beim Start bzw. ohne gemeldeten Schritt „startet…").
+    private func stepLabel(_ stream: Stream) -> String {
+        guard stream.status != .starting, let step = stream.currentStep, !step.isEmpty, step != "starting up" else {
+            return "startet …"
+        }
+        return step
     }
 
     /// Prominenter Stopp-Knopf im Composer — unterbricht den laufenden Turn (wie der Prompt-Stopp in der
@@ -260,16 +279,21 @@ private struct TimelineItemView: View {
     @ViewBuilder private var content: some View {
         switch item.kind {
         case .user: EmptyView() // oben separat gerendert
-        case .assistant(let text):
-            Text(markdown(text)) // Markdown wie in mads (fett/kursiv/Code/Links)
-                .frame(maxWidth: .infinity, alignment: .leading)
-        case .thinking(let text):
-            Text(text).font(.callout).italic().foregroundStyle(.secondary)
-        case .tool(_, let name, let ok):
-            HStack(spacing: 6) {
-                Text(name).font(.system(.footnote, design: .monospaced)).bold()
-                if let ok, !ok { Text("Fehler").font(.caption2).foregroundStyle(.red) }
+        case .assistant(let text, let via):
+            VStack(alignment: .leading, spacing: 2) {
+                if let via { SubAgentTag(label: via) }
+                Text(markdown(text)) // Markdown wie in mads (fett/kursiv/Code/Links)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
+        case .thinking(let text, let via):
+            VStack(alignment: .leading, spacing: 2) {
+                if let via { SubAgentTag(label: via) }
+                Text(text).font(.callout).italic().foregroundStyle(.secondary)
+            }
+        case .tool(let card):
+            ToolCardView(card: card)
+        case .todos(let todos):
+            TodosView(todos: todos)
         case .notice(let text):
             Text(markdown(text)).font(.footnote).foregroundStyle(.secondary)
         }
@@ -280,11 +304,13 @@ private struct TimelineItemView: View {
         switch item.kind {
         case .user, .assistant, .thinking, .notice:
             return Color.secondary.opacity(0.5)
-        case .tool(_, _, let ok):
-            switch ok {
+        case .todos:
+            return .green
+        case .tool(let card):
+            switch card.ok {
             case .some(true): return .green
             case .some(false): return .red
-            case .none: return .orange // läuft
+            case .none: return card.running ? .orange : Color.secondary.opacity(0.5)
             }
         }
     }
@@ -293,5 +319,115 @@ private struct TimelineItemView: View {
         (try? AttributedString(
             markdown: s,
             options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(s)
+    }
+}
+
+/// Marke „aufgerufen von einem Teil-Agenten" (mads `tl-tool-via`) — ohne sie sieht die Äusserung
+/// bzw. der Aufruf eines Teil-Agenten genauso aus wie einer des Streams selbst.
+private struct SubAgentTag: View {
+    let label: String
+
+    var body: some View {
+        Text("▸ \(label)")
+            .font(.caption2)
+            .foregroundStyle(.tertiary)
+            .lineLimit(1)
+    }
+}
+
+/// Eine Werkzeug-Karte wie in der mads-Timeline: Name + mitgelieferte Beschreibung, darunter das
+/// Argument (IN) und das Ergebnis (OUT). Langes Ergebnis wird gekürzt und lässt sich aufklappen
+/// (Desktop: „mehr anzeigen" ab 400 Zeichen).
+private struct ToolCardView: View {
+    let card: ToolCard
+    @State private var expanded = false
+
+    private var isLong: Bool { (card.output?.count ?? 0) > 400 }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                Text(card.name).font(.system(.footnote, design: .monospaced)).bold()
+                if let via = card.viaSubAgent { SubAgentTag(label: via) }
+                if card.ok == false { Text("Fehler").font(.caption2).foregroundStyle(.red) }
+                Spacer(minLength: 0)
+            }
+            if let description = card.description, !description.isEmpty {
+                Text(description).font(.caption).foregroundStyle(.secondary)
+            }
+            if let command = card.command, !command.isEmpty {
+                ioBlock(label: "IN", text: command, lineLimit: expanded ? nil : 6)
+            }
+            if let output = card.output, !output.isEmpty {
+                ioBlock(label: "OUT", text: output, lineLimit: expanded || !isLong ? nil : 8)
+            }
+            if isLong {
+                Button(expanded ? "weniger" : "mehr anzeigen") { expanded.toggle() }
+                    .font(.caption2)
+                    .buttonStyle(.plain)
+                    .foregroundStyle(Color.accentColor)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// Ein IN-/OUT-Block: Kürzel links, monospaced Inhalt auf getöntem Grund. Der Text UMBRICHT
+    /// (kein horizontales Scrollen) — auf dem Handy sonst unlesbar.
+    private func ioBlock(label: String, text: String, lineLimit: Int?) -> some View {
+        HStack(alignment: .top, spacing: 6) {
+            Text(label)
+                .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                .foregroundStyle(.tertiary)
+                .padding(.top, 3)
+            Text(text)
+                .font(.system(.caption2, design: .monospaced))
+                .textSelection(.enabled)      // Befehl/Ausgabe kopierbar (z. B. um sie am Mac zu prüfen)
+                .lineLimit(lineLimit)
+                .truncationMode(.tail)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.horizontal, 7)
+        .padding(.vertical, 5)
+        .background(Color.secondary.opacity(0.10), in: RoundedRectangle(cornerRadius: 7))
+    }
+}
+
+/// Die To-do-Liste eines Streams (TodoWrite) — wie am Mac eine eigene Karte statt einer
+/// Werkzeug-Zeile, deren Inhalt sonst im rohen JSON-Argument verschwände.
+private struct TodosView: View {
+    let todos: [TodoItem]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text("Todos").font(.system(.footnote, design: .monospaced)).bold()
+            ForEach(Array(todos.enumerated()), id: \.offset) { _, todo in
+                HStack(alignment: .top, spacing: 6) {
+                    Text(mark(todo.status)).font(.caption2).foregroundStyle(color(todo.status))
+                    Text(todo.content)
+                        .font(.caption)
+                        .foregroundStyle(todo.status == "completed" ? .secondary : .primary)
+                        .strikethrough(todo.status == "completed")
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func mark(_ status: String) -> String {
+        switch status {
+        case "completed": return "✓"
+        case "in_progress": return "▸"
+        default: return "☐"
+        }
+    }
+
+    private func color(_ status: String) -> Color {
+        switch status {
+        case "completed": return .green
+        case "in_progress": return .orange
+        default: return .secondary
+        }
     }
 }
