@@ -11,6 +11,9 @@ struct WireFrame: Decodable, Sendable {
     let token: String?
     let deviceId: String?
     let error: String?
+    /// „host:port"-Liste aus `pair-reply`/`auth-reply`: alle Adressen, unter denen die Bridge
+    /// erreichbar ist (LAN UND Overlay). Fehlt bei mads-Versionen vor dieser Erweiterung.
+    let endpoints: [String]?
 
     static func decode(_ text: String) -> WireFrame? {
         guard let data = text.data(using: .utf8) else { return nil }

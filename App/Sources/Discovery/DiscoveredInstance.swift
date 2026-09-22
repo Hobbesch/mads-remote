@@ -17,7 +17,10 @@ struct DiscoveredInstance: Identifiable, Hashable, Sendable {
     let advertisedHost: String?
     let serviceName: String   // roher Bonjour-Instanzname ("mads-<iid>" neu / "mads-<fp12>"/"mads-<pid>" alt)
     let txtInstanceId: String?    // TXT "iid" = Projekt-Identität (fehlt bei älteren mads-Versionen)
-    let endpoint: NWEndpoint
+    /// Der Bonjour-Endpunkt — nur bei einer GERADE entdeckten Instanz vorhanden. Eine aus dem
+    /// Speicher rekonstruierte (ausserhalb des WLAN, kein mDNS) hat keinen; sie verbindet über die
+    /// gemerkten Endpunkte.
+    let endpoint: NWEndpoint?
 
     /// Schlüssel, unter dem Token + gepinnter Fingerprint in der Keychain liegen. Das ist die
     /// HOST-Identität (SPKI-fp), NICHT die Projekt-Identität: seit mads Zertifikat und Geräte-DB
@@ -48,6 +51,26 @@ struct DiscoveredInstance: Identifiable, Hashable, Sendable {
         self.txtInstanceId = f.iid
         self.endpoint = result.endpoint
     }
+
+    /// Aus dem Speicher rekonstruieren: kein TXT-Record, kein Bonjour-Endpunkt — die Verbindung
+    /// läuft ausschliesslich über die gemerkten Endpunkte (`KnownInstanceStore`).
+    init(known: KnownInstance) {
+        self.id = known.id
+        self.name = known.name
+        self.project = known.project
+        self.pid = nil
+        self.protocolVersion = nil
+        self.fingerprint = known.fingerprint
+        self.directHost = nil
+        self.directPort = nil
+        self.advertisedHost = nil
+        self.serviceName = known.id
+        self.txtInstanceId = known.fingerprint == nil ? nil : known.id
+        self.endpoint = nil
+    }
+
+    /// Wurde diese Instanz gerade im Netz gefunden — oder stammt sie aus dem Speicher?
+    var isDiscovered: Bool { endpoint != nil }
 
     /// Servicename folgt dem stabilen Schema `mads-<iid>` (bzw. `mads-<fp[0..<12]>` bei älteren
     /// mads-Versionen)? So lässt sich der LEBENDE Eintrag von veralteten pid-benannten
@@ -94,6 +117,21 @@ struct DiscoveredInstance: Identifiable, Hashable, Sendable {
             if item.freshnessRank > existing.freshnessRank { byEndpoint[key] = item }
         }
         return Array(byEndpoint.values) + withoutEndpoint
+    }
+
+    /// Entdeckte und GEMERKTE Instanzen zu einer Liste vereinen.
+    ///
+    /// Ausserhalb des WLAN findet der `NWBrowser` nichts — ohne diesen Schritt bliebe die Liste leer
+    /// und man käme gar nicht erst in die Lage, es über einen Tunnel zu versuchen. Was gerade
+    /// entdeckt wurde, gewinnt: der Live-Eintrag trägt TXT-Record und Bonjour-Endpunkt und damit die
+    /// schnelleren Verbindungswege.
+    static func mergingKnown(_ discovered: [DiscoveredInstance], known: [KnownInstance]) -> [DiscoveredInstance] {
+        let liveIds = Set(discovered.map(\.id))
+        let remembered = known
+            .filter { !liveIds.contains($0.id) }
+            .map(DiscoveredInstance.init(known:))
+        return (discovered + remembered)
+            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
     }
 
     /// Pure TXT→Felder-Abbildung — von `NWBrowser` entkoppelt und damit unit-testbar.

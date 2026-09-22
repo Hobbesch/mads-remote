@@ -4,8 +4,10 @@ import Foundation
 enum ConnectionEvent: Sendable {
     /// WS-Handshake steht wirklich (`didOpenWithProtocol`) — erst jetzt Auth/Pairing anstoßen.
     case connected
-    case authenticated(deviceId: String)
-    case paired(token: String, deviceId: String)
+    /// `endpoints`: die von der Bridge gemeldeten „host:port" — die Session merkt sie sich, damit
+    /// das Gerät den Mac auch ohne mDNS wiederfindet. Leer bei älteren mads-Versionen.
+    case authenticated(deviceId: String, endpoints: [String])
+    case paired(token: String, deviceId: String, endpoints: [String])
     case pairRejected(String)
     case failed(String)
 }
@@ -140,13 +142,13 @@ actor SocketConnection {
             if let id = frame.id { resolve(id, text) }
         case "pair-reply":
             if frame.ok == true, let token = frame.token, let dev = frame.deviceId {
-                eventsCont.yield(.paired(token: token, deviceId: dev))
+                eventsCont.yield(.paired(token: token, deviceId: dev, endpoints: frame.endpoints ?? []))
             } else {
                 eventsCont.yield(.pairRejected(frame.error ?? "Pairing fehlgeschlagen"))
             }
         case "auth-reply":
             if frame.ok == true {
-                eventsCont.yield(.authenticated(deviceId: frame.deviceId ?? ""))
+                eventsCont.yield(.authenticated(deviceId: frame.deviceId ?? "", endpoints: frame.endpoints ?? []))
             } else {
                 eventsCont.yield(.failed(frame.error ?? "Authentifizierung fehlgeschlagen"))
             }

@@ -65,7 +65,11 @@ final class InstanceSession {
     /// Zweite Wahl ist deshalb der mDNS-HOSTNAME: dessen A-Record hält die Bridge über
     /// `enable_addr_auto()` aktuell, und er trägt — anders als eine aufgelöste Link-Local-Adresse —
     /// keine Interface-Zone, an der `URLSession` mit `-1002 „URL nicht unterstützt"` aussteigt.
-    /// Letzte Wahl bleibt die Bonjour-Auflösung.
+    ///
+    /// Dritte Wahl sind die GEMERKTEN Endpunkte, die die Bridge beim letzten Verbinden selbst
+    /// gemeldet hat. Sie tragen den Fernzugriff: ausserhalb des WLAN gibt es weder TXT-Record noch
+    /// Bonjour, wohl aber die Adresse aus dem Overlay-Netz, die hier gespeichert liegt. Letzte Wahl
+    /// bleibt die Bonjour-Auflösung — die es nur bei einer gerade entdeckten Instanz gibt.
     ///
     /// Jeder Kandidat wird kurz angeklopft, statt blind eine URL zu bauen — so kostet ein toter
     /// Eintrag zwei Sekunden statt der vollen acht des Watchdogs. Ein falsch aufgelöster Host kann
@@ -80,7 +84,20 @@ final class InstanceSession {
                 return (host: hostname, port: port)
             }
         }
-        return await BonjourResolver.resolve(instance.endpoint)
+        for endpoint in KnownInstanceStore.endpoints(id: instance.id) {
+            guard let (host, port) = KnownInstance.split(endpoint) else { continue }
+            if await TCPProbe.reachable(host: host, port: port) { return (host: host, port: port) }
+        }
+        guard let endpoint = instance.endpoint else { return nil }
+        return await BonjourResolver.resolve(endpoint)
+    }
+
+    /// Instanz samt gemeldeten Endpunkten merken — nach JEDER erfolgreichen Verbindung, damit eine
+    /// gewechselte LAN- oder Overlay-Adresse von selbst nachgezogen wird.
+    private func rememberInstance(endpoints: [String]) {
+        KnownInstanceStore.remember(
+            id: instance.id, name: instance.name, project: instance.project,
+            fingerprint: instance.fingerprint, endpoints: endpoints)
     }
 
     /// Der mDNS-Hostname, unter dem JEDE mads-Bridge ihren Service annonciert (`advertise()` in
@@ -311,9 +328,10 @@ final class InstanceSession {
                 cancelWatchdog()                                    // Ruhezustand: wartet auf Nutzer-PIN
                 phase = .needsPairing
             }
-        case .paired(let token, _):
+        case .paired(let token, _, let endpoints):
             // Beim ersten Pairing den (TOFU-)fp mit dem Token pinnen.
             cancelWatchdog()
+            rememberInstance(endpoints: endpoints)
             if !KeychainStore.saveCredentials(instanceId: instance.credentialKey, token: token, fingerprint: tofuFingerprint) {
                 // Sichtbar machen statt schlucken: sonst wird die Sitzung live, verlangt beim
                 // nächsten Verbinden aber wieder ein Pairing, ohne dass irgendwo ein Grund steht.
@@ -321,8 +339,9 @@ final class InstanceSession {
             }
             await requestSnapshot()
             phase = .live
-        case .authenticated:
+        case .authenticated(_, let endpoints):
             cancelWatchdog()
+            rememberInstance(endpoints: endpoints)
             await requestSnapshot()
             phase = .live
         case .pairRejected(let reason), .failed(let reason):
