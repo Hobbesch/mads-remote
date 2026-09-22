@@ -78,8 +78,67 @@ struct StreamDetailView: View {
 
     private var streamTitle: String { stream?.label ?? streamId }
 
+    /// Verbindungszustand ÜBER dem Composer.
+    ///
+    /// Diese Ansicht liegt als aufgeschobene Seite über `InstanceDetailView`. Stirbt die Verbindung,
+    /// wechselt die darunter auf „Nicht verbunden" — hier oben sah man davon nichts: alte Timeline,
+    /// aktiver Pfeil, und jedes Senden verpuffte stumm. Deshalb hier ein eigener Riegel.
+    @ViewBuilder private var connectionBanner: some View {
+        if session.phase != .live {
+            HStack(spacing: 8) {
+                if isConnecting {
+                    ProgressView().controlSize(.mini)
+                    Text("Verbinde …")
+                } else {
+                    Image(systemName: "bolt.horizontal.circle.fill")
+                    Text(disconnectReason).lineLimit(2)
+                }
+                Spacer(minLength: 0)
+                if !isConnecting {
+                    Button("Neu verbinden") { Task { await session.reconnect() } }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                }
+            }
+            .font(.caption)
+            .foregroundStyle(isConnecting ? Color.secondary : Color.orange)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private var isConnecting: Bool {
+        session.phase == .resolving || session.phase == .connecting
+    }
+
+    private var disconnectReason: String {
+        if case .failed(let reason) = session.phase { return reason }
+        if session.phase == .needsPairing { return "Kopplung nötig — zurück zur Instanz-Liste." }
+        return "Verbindung getrennt."
+    }
+
+    /// Der zuletzt vermerkte Fehler. Vorher landete er nur in `store.lastError` und wurde einzig vom
+    /// Markdown-Editor gelesen — ein fehlgeschlagenes Senden war damit vollständig unsichtbar.
+    @ViewBuilder private var errorBanner: some View {
+        if let error = session.store.lastError {
+            HStack(alignment: .top, spacing: 6) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                Text(error)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 0)
+                Button("OK") { session.store.clearError() }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(Color.accentColor)
+            }
+            .font(.caption)
+            .foregroundStyle(.red)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
     private var composer: some View {
         VStack(spacing: 4) {
+            connectionBanner
+            errorBanner
             // Status der Spracheingabe (Download/Aufnahme/Transkription/Fehler) — nur wenn relevant.
             if let status = dictation.statusText {
                 HStack(spacing: 6) {
@@ -107,7 +166,9 @@ struct StreamDetailView: View {
                 } label: {
                     Image(systemName: "arrow.up.circle.fill").font(.title2)
                 }
-                .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                // Ohne stehende Verbindung gesperrt — ein Tipp verpuffte sonst stumm, und der Riegel
+                // darüber sagt auch warum. Der Entwurf bleibt dabei erhalten.
+                .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || session.phase != .live)
             }
         }
         .padding(8)

@@ -164,6 +164,12 @@ final class InstanceStore {
         lastError = message
     }
 
+    /// Den vermerkten Fehler abräumen — nachdem er gezeigt wurde oder ein Versuch geklappt hat.
+    /// Ohne das bliebe eine alte Meldung stehen und behauptete ein Problem, das längst weg ist.
+    func clearError() {
+        lastError = nil
+    }
+
     // MARK: - intern
 
     private func applyAgentEvent(_ id: String, _ event: AgentEvent) {

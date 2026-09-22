@@ -186,6 +186,7 @@ final class InstanceSession {
         }
         do {
             try await conn.send(OutgoingFrame.command(hostMessage: hostMessage))
+            store.clearError()   // geklappt → eine ältere Meldung darf nicht stehen bleiben
             return true
         } catch {
             store.noteError("Senden fehlgeschlagen: \(error.localizedDescription)")

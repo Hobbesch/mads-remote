@@ -82,6 +82,39 @@ struct CommandTests {
         #expect(session.store.lastError != nil)
     }
 
+    /// Der gemeldete Fehler: diktierten Text abschicken, Pfeil gedrückt, NICHTS passiert.
+    ///
+    /// Ursache war nicht das Senden selbst — das meldete den Fehlschlag korrekt —, sondern dass
+    /// niemand ihn zeigte: `lastError` las einzig der Markdown-Editor. Dieser Test pinnt beides:
+    /// `sendInput` gibt `false` zurück (der Entwurf bleibt also stehen) UND vermerkt den Grund,
+    /// den der Composer jetzt anzeigt.
+    @Test func sendInputFailsVisiblyWhenDisconnected() async {
+        let session = InstanceSession(instance: DiscoveredInstance(testId: "x", name: "n", project: "p", fingerprint: nil))
+        #expect(session.store.lastError == nil)
+
+        let delivered = await session.sendInput(agentId: "a", text: "diktierter Prompt")
+        #expect(delivered == false)
+        #expect(session.store.lastError == "Nicht verbunden.")
+    }
+
+    /// Eine frische Sitzung ist NICHT live — genau daran hängt die Sperre des Senden-Knopfs, damit
+    /// ein Tipp nicht wieder folgenlos bleibt.
+    @Test func freshSessionIsNotLive() async {
+        let session = InstanceSession(instance: DiscoveredInstance(testId: "x", name: "n", project: "p", fingerprint: nil))
+        #expect(session.phase != .live)
+    }
+
+    /// Eine gezeigte Meldung muss wieder wegzubekommen sein — sonst behauptete sie ein Problem,
+    /// das längst erledigt ist.
+    @Test func clearErrorRemovesTheNotice() async {
+        let session = InstanceSession(instance: DiscoveredInstance(testId: "x", name: "n", project: "p", fingerprint: nil))
+        _ = await session.sendInput(agentId: "a", text: "x")
+        #expect(session.store.lastError != nil)
+
+        session.store.clearError()
+        #expect(session.store.lastError == nil)
+    }
+
     /// Doppel-Antwort-Guard: ist die Anfrage schon weg, tut ein zweiter Aufruf nichts.
     @Test func answerPermissionIsNoOpWhenAlreadyAnswered() async {
         let session = InstanceSession(instance: DiscoveredInstance(testId: "x", name: "n", project: "p", fingerprint: nil))
