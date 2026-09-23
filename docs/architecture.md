@@ -261,11 +261,19 @@ Reihenfolge: **Bridge zuerst** (gewählt) — P0.2 ist das kleinste wertvolle In
   „Notifications nur solange die App läuft" (bzw. im Kurz-Hintergrund). Echtes
   Background-Escalation würde APNs erfordern → bricht das No-Cloud-Nicht-Ziel. Rückstellbar auf später.
 - **Reichweite:** rein LAN. Fern-Zugriff nur über nutzereigenes VPN, kein eigener Relay-Dienst.
-- **„Immer erlauben" gibt es nur am Mac.** Die Bridge streicht `decision.remember` aus jeder
-  Remote-Antwort (Sicherheitsregel RB-AUTH-1 in `bridge.rs`): eine dauerhafte Auto-Freigabe aus der
-  Ferne wäre eine Remote-RCE, die die `permissionMode`-Allow-Liste umginge. Die Karte in der App
-  bietet den Knopf deshalb **nicht** an und sagt das bei merkbaren Kategorien dazu, statt ihn
-  wirkungslos anzuzeigen. Interaktives Erlauben/Ablehnen/Antworten bleibt unverändert möglich.
+- **„Immer erlauben" gibt es nur am Mac.** Die Bridge streicht `decision.remember` (und
+  `decision.updatedInput`) aus jeder Remote-Antwort (`bridge.rs`): eine einzelne Freigabe darf weder
+  den Tool-Input umschreiben noch sich selbst verewigen. Die Karte in der App bietet den Knopf
+  deshalb **nicht** an und sagt das bei merkbaren Kategorien dazu, statt ihn wirkungslos
+  anzuzeigen. Interaktives Erlauben/Ablehnen/Antworten bleibt unverändert möglich.
+- **Betriebsart-Umstellung: volle Parität zum Mac (seit 2026-09-23).** Das Gerät darf Modell/Effort,
+  Permission-Modus, Sandbox-Betriebsart und Claude-Konto eines Streams umstellen — auch in die
+  unbeaufsichtigten Modi und auf „Sandbox aus". Das ist eine bewusste Entscheidung des Besitzers und
+  eine Lockerung gegenüber der ursprünglichen RB-AUTH-1-Allowlist (`default`/`plan`); der Nachtrag
+  in `mads/docs/security/SECURITY-AUDIT-remote-bridge-2026-07-09.md` hält fest, was sie kostet und
+  was die Grenze weiterhin trägt. In der App hängt vor jeder solchen Umstellung eine Rückfrage, die
+  die Folge benennt — und keine Umstellung wird optimistisch angezeigt: erst mads' `status_update`
+  schreibt sie in den Store, ein Abbruch lässt den Picker also von selbst zurückschnappen.
 - **Auth v1:** Bearer-Token (widerrufbar). **mTLS** ist die dokumentierte stärkere Aufrüstung
   (per-Frame-Auth automatisch auf TLS-Ebene, Widerruf = Zertifikat sperren) — nachrüstbar.
 - **Context7:** in dieser Session nicht als MCP verbunden; Framework-Stand wurde über

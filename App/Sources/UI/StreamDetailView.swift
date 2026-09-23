@@ -1,41 +1,83 @@
 import SwiftUI
 
-/// Chat-/Timeline-Ansicht eines Streams mit Composer (send_input) + Aktions-Menü (P3.1). Beobachtet
-/// den `InstanceStore` und schlägt den Stream per id nach → aktualisiert live.
+/// Chat-/Timeline-Ansicht eines Streams mit Composer (send_input), Stream-Randleiste und
+/// Einstellungs-Sheet. Beobachtet den `InstanceStore` und schlägt den Stream per id nach.
+///
+/// `streamId` ist `@State`, nicht `let`: die Randleiste schaltet IN DIESER ANSICHT um, statt eine
+/// weitere Seite auf den Navigations-Stapel zu legen. Sonst stapelten sich bei fünf Wechseln fünf
+/// Detail-Ansichten übereinander, jede mit eigener Verbindung ans Store-Objekt und eigenem „Zurück".
 struct StreamDetailView: View {
     let session: InstanceSession
-    let streamId: String
+    @State private var streamId: String
 
-    @State private var draft = ""
-    @State private var confirmCreatePR = false
-    @State private var confirmIntegrate = false
-    @State private var confirmStop = false
+    /// Entwürfe PRO Stream: beim Umschalten soll ein halb getippter Prompt nicht im falschen Stream
+    /// landen — und beim Zurückschalten auch nicht weg sein.
+    @State private var drafts: [String: String] = [:]
+    @State private var showSettings = false
     @StateObject private var dictation = DictationController()
+
+    init(session: InstanceSession, streamId: String) {
+        self.session = session
+        _streamId = State(initialValue: streamId)
+    }
 
     private var store: InstanceStore { session.store }
     private var stream: Stream? { store.streams[streamId] }
 
+    private var draft: Binding<String> {
+        Binding(get: { drafts[streamId] ?? "" }, set: { drafts[streamId] = $0 })
+    }
+
     var body: some View {
         VStack(spacing: 0) {
-            // Berechtigungsanfragen DIESES Streams direkt hier zeigen (mads-eigene Tool-Freigaben) —
-            // rendert nichts, wenn keine offen sind. (macOS-Systemdialoge sind OS-lokal, nicht spiegelbar.)
-            PermissionBanner(session: session, agentId: streamId)
-            timeline
+            HStack(spacing: 0) {
+                VStack(spacing: 0) {
+                    // Berechtigungsanfragen DIESES Streams direkt hier zeigen (mads-eigene Tool-Freigaben) —
+                    // rendert nichts, wenn keine offen sind. (macOS-Systemdialoge sind OS-lokal, nicht spiegelbar.)
+                    PermissionBanner(session: session, agentId: streamId)
+                    timeline
+                }
+                // Nur bei mehr als einem Stream: bei einem einzigen wäre die Leiste 44 pt ohne Nutzen.
+                if store.order.count > 1 {
+                    Divider()
+                    StreamRail(session: session, selected: $streamId)
+                }
+            }
             composer
         }
         .navigationTitle(streamTitle)
         .navigationBarTitleDisplayMode(.inline)
         .onDisappear { dictation.cancel() } // Ansicht verlassen → laufende Diktat-Aufnahme verwerfen
-        .toolbar { ToolbarItem(placement: .topBarTrailing) { actionMenu } }
-        .confirmationDialog("Pull Request erstellen?", isPresented: $confirmCreatePR, titleVisibility: .visible) {
-            Button("PR erstellen") { Task { await session.streamAction("create_pr", agentId: streamId) } }
-        } message: { Text("Erstellt einen außen sichtbaren Pull Request aus diesem Stream.") }
-        .confirmationDialog("Integrieren (nach main mergen)?", isPresented: $confirmIntegrate, titleVisibility: .visible) {
-            Button("Integrieren", role: .destructive) { Task { await session.streamAction("integrate_pr", agentId: streamId) } }
-        } message: { Text("Merged diesen Stream nach main. Irreversibel.") }
-        .confirmationDialog("Stream stoppen?", isPresented: $confirmStop, titleVisibility: .visible) {
-            Button("Stoppen", role: .destructive) { Task { await session.stopAgent(agentId: streamId) } }
+        // Stream gewechselt → ein laufendes Diktat gehört nicht in den neuen Stream.
+        .onChange(of: streamId) { _, _ in dictation.cancel() }
+        .toolbar { ToolbarItem(placement: .topBarTrailing) { settingsButton } }
+        .sheet(isPresented: $showSettings) {
+            StreamSettingsSheet(session: session, streamId: streamId)
         }
+    }
+
+    /// Der Einstieg in die Menüleiste. Kostet keine Bildschirmhöhe und trägt zugleich die Warnung:
+    /// ein farbiger Punkt, sobald ein Kontingent-Fenster in den Warnbereich läuft — genau die
+    /// Information, für die man sonst erst das Menü öffnen müsste.
+    private var settingsButton: some View {
+        Button { showSettings = true } label: {
+            ZStack(alignment: .topTrailing) {
+                Image(systemName: "line.3.horizontal")
+                if let tone = usageWarningTone {
+                    Circle().fill(tone).frame(width: 7, height: 7).offset(x: 5, y: -3)
+                }
+            }
+        }
+        .accessibilityLabel("Stream-Einstellungen")
+    }
+
+    /// Farbe des Warnpunkts am Menü-Icon: ab 75 % orange, ab 95 % rot, darunter keiner.
+    private var usageWarningTone: Color? {
+        let accountId = stream?.accountId ?? store.accounts.activeId
+        guard let peak = store.usage[accountId]?.peakUtilization else { return nil }
+        if peak >= 95 { return .red }
+        if peak >= 75 { return .orange }
+        return nil
     }
 
     private let bottomID = "timeline-bottom"
@@ -150,17 +192,20 @@ struct StreamDetailView: View {
                 }
             }
             HStack(spacing: 8) {
-                TextField("Nachricht an den Stream …", text: $draft, axis: .vertical)
+                TextField("Nachricht an den Stream …", text: draft, axis: .vertical)
                     .textFieldStyle(.roundedBorder)
                     .lineLimit(1...4)
                 micButton
                 if isStreamActive { stopButton } // laufenden Prozess unterbrechen (wie der Prompt-Stopp in mads)
                 Button {
-                    let text = draft
+                    // Ziel-Stream beim TAP festhalten: schaltet die Randleiste während des Sendens
+                    // um, ginge die Nachricht sonst an den neuen Stream bzw. würde dessen Entwurf leeren.
+                    let id = streamId
+                    let text = drafts[id] ?? ""
                     Task {
                         // Feld erst leeren, wenn die Nachricht wirklich rausging (sonst geht sie verloren).
-                        if await session.sendInput(agentId: streamId, text: text) {
-                            draft = ""
+                        if await session.sendInput(agentId: id, text: text) {
+                            drafts[id] = ""
                         }
                     }
                 } label: {
@@ -168,7 +213,7 @@ struct StreamDetailView: View {
                 }
                 // Ohne stehende Verbindung gesperrt — ein Tipp verpuffte sonst stumm, und der Riegel
                 // darüber sagt auch warum. Der Entwurf bleibt dabei erhalten.
-                .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || session.phase != .live)
+                .disabled(draft.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || session.phase != .live)
             }
         }
         .padding(8)
@@ -209,7 +254,8 @@ struct StreamDetailView: View {
             Task {
                 if dictation.isRecording {
                     if let text = await dictation.stopAndTranscribe(), !text.isEmpty {
-                        draft = draft.isEmpty ? text : draft + " " + text
+                        let current = draft.wrappedValue
+                        draft.wrappedValue = current.isEmpty ? text : current + " " + text
                     }
                 } else {
                     await dictation.startRecording()
@@ -225,41 +271,42 @@ struct StreamDetailView: View {
         .accessibilityLabel(dictation.isRecording ? "Diktat stoppen" : "Per Sprache diktieren")
     }
 
-    private var actionMenu: some View {
-        Menu {
-            Button { Task { await session.interrupt(agentId: streamId) } } label: {
-                Label("Unterbrechen", systemImage: "stop.circle")
-            }
-            Button { Task { await session.streamAction("sync_branch", agentId: streamId) } } label: {
-                Label("Sync (rebase)", systemImage: "arrow.triangle.2.circlepath")
-            }
-            Button { Task { await session.streamAction("gate_task", agentId: streamId) } } label: {
-                Label("Gate ausführen", systemImage: "checkmark.seal")
-            }
-            Button { confirmCreatePR = true } label: {
-                Label("PR erstellen", systemImage: "arrow.triangle.pull")
-            }
-            Divider()
-            Button(role: .destructive) { confirmIntegrate = true } label: {
-                Label("Integrieren", systemImage: "arrow.triangle.merge")
-            }
-            Button(role: .destructive) { confirmStop = true } label: {
-                Label("Stream stoppen", systemImage: "xmark.circle")
-            }
-        } label: {
-            Image(systemName: "ellipsis.circle")
-        }
-    }
-
+    /// Kopfzeile der Timeline: Status, Verbrauch — und die Betriebsart, unter der dieser Stream
+    /// läuft. Sie steht IN der Timeline (scrollt also mit) und kostet damit keinen Dauerplatz; wer
+    /// sie ändern will, öffnet das Menü.
     private func header(_ stream: Stream) -> some View {
-        HStack(spacing: 8) {
-            StatusDot(status: stream.status)
-            Text(String(describing: stream.status)).font(.caption).foregroundStyle(.secondary)
-            Spacer()
-            Text("\(stream.numTurns) Turns · $\(String(format: "%.2f", stream.costUsd))")
-                .font(.caption).foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 8) {
+                StatusDot(status: stream.status)
+                Text(String(describing: stream.status)).font(.caption).foregroundStyle(.secondary)
+                Spacer()
+                Text("\(stream.numTurns) Turns · $\(String(format: "%.2f", stream.costUsd))")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            HStack(spacing: 6) {
+                chip(ModelCatalog.label(for: stream.model) + (stream.effort.map { " · \($0.label)" } ?? ""))
+                if let mode = stream.permissionMode {
+                    chip(mode.shortLabel, tone: mode.runsUnattended ? .orange : nil)
+                }
+                // Gelockerte Sandbox unübersehbar — Gegenstück zum Badge am Mac.
+                if stream.role != "integrator", let sandbox = stream.sandboxMode, sandbox != .on {
+                    chip(sandbox.shortLabel, symbol: sandbox.symbol, tone: sandbox == .off ? .orange : nil)
+                }
+                Spacer(minLength: 0)
+            }
         }
         .padding(.bottom, 4)
+    }
+
+    private func chip(_ text: String, symbol: String? = nil, tone: Color? = nil) -> some View {
+        HStack(spacing: 3) {
+            if let symbol { Image(systemName: symbol).font(.system(size: 9)) }
+            Text(text)
+        }
+        .font(.caption2)
+        .foregroundStyle(tone ?? .secondary)
+        .padding(.horizontal, 6).padding(.vertical, 2)
+        .background((tone ?? Color.secondary).opacity(0.12), in: Capsule())
     }
 }
 

@@ -247,6 +247,44 @@ final class InstanceSession {
         await sendCommand(["type": type, "agentId": agentId])
     }
 
+    // MARK: - Betriebsart eines Streams (Modell, Effort, Permission-Modus, Sandbox, Konto)
+    //
+    // Alle fünf ändern, WIE ein Agent arbeitet. Keine davon wird optimistisch in den Store
+    // geschrieben: mads bestätigt jede Umstellung mit einem `status_update` (bzw. `model_active`),
+    // und erst das ist die Wahrheit. Ein optimistischer Eintrag würde sonst eine Betriebsart
+    // anzeigen, in der der Stream gar nicht läuft — genau der Fehler, den `accountId` im
+    // status_update am Mac schon einmal geheilt hat.
+
+    /// Modell und/oder Effort live umstellen (mads wendet es ohne Neustart an).
+    func setModelEffort(agentId: String, model: String? = nil, effort: EffortMode? = nil) async {
+        await sendCommand(StreamCommand.modelEffort(agentId: agentId, model: model, effort: effort))
+    }
+
+    /// Permission-Modus umstellen. Die Bridge nimmt seit 2026-09-23 alle Mac-Modi an — inklusive
+    /// der unbeaufsichtigten. Der aufrufende Knopf warnt entsprechend.
+    func setPermissionMode(agentId: String, mode: PermissionMode) async {
+        await sendCommand(StreamCommand.permissionMode(agentId: agentId, mode: mode))
+    }
+
+    /// Sandbox-Betriebsart umstellen. mads startet den Prozess dafür neu und setzt dieselbe
+    /// Claude-Session per Resume fort — der Gesprächsverlauf bleibt, der Stream pausiert kurz.
+    func setSandboxMode(agentId: String, mode: SandboxMode) async {
+        await sendCommand(StreamCommand.sandboxMode(agentId: agentId, mode: mode))
+    }
+
+    /// Claude-Konto wechseln. Ohne `agentId`: nur das Default für NEUE Streams. Mit `agentId` wird
+    /// der laufende Prozess beendet und im Ziel-Konto per Resume fortgesetzt (`CLAUDE_CONFIG_DIR`
+    /// steht nach dem Start fest).
+    func setAccount(_ accountId: String, agentId: String? = nil) async {
+        await sendCommand(StreamCommand.account(accountId, agentId: agentId))
+    }
+
+    /// Konten-Registry neu anfordern (Start/Reconnect). Der Snapshot liefert sie ohnehin mit; das
+    /// hier ist der dokumentierte Weg, sie unabhängig davon aufzufrischen.
+    func requestAccounts() async {
+        await sendCommand(StreamCommand.requestAccounts)
+    }
+
     // MARK: - file-rpc (P3.2) — Datei-Baum + Markdown lesen/schreiben
 
     /// Request bauen (Args auf dem MainActor) und nur den fertigen String an die Actor reichen.
@@ -352,7 +390,10 @@ final class InstanceSession {
     }
 
     private func requestSnapshot() async {
-        try? await connection?.send(OutgoingFrame.command(hostMessage: ["type": "request_snapshot"]))
+        try? await connection?.send(OutgoingFrame.command(hostMessage: StreamCommand.requestSnapshot))
+        // Konten getrennt anfordern: `request_snapshot` liefert sie erst ab mads 2026-09-23 mit,
+        // und ohne sie zeigt der Konto-Wähler nur rohe Profil-IDs.
+        try? await connection?.send(OutgoingFrame.command(hostMessage: StreamCommand.requestAccounts))
     }
 
     static let deviceName: String = {

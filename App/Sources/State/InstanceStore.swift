@@ -16,6 +16,16 @@ struct Stream: Identifiable, Sendable {
     var dirty: Bool = false
     var syncBlocked: Bool?
     var pr: PullRequestInfo?
+    /// Konfiguration, wie der Sidecar sie meldet (er hat den Prozess gestartet). Die App SETZT sie
+    /// nie selbst optimistisch: ein Umschalten gilt erst, wenn mads es bestätigt hat — sonst zeigte
+    /// das Menü eine Betriebsart an, in der der Stream gar nicht läuft.
+    var accountId: String?
+    var sandboxMode: SandboxMode?
+    var model: String?                  // angefordert
+    var activeModel: String?            // real vom SDK gelaufen (`model_active`)
+    var modelMismatch: Bool = false
+    var effort: EffortMode?
+    var permissionMode: PermissionMode?
     var timeline: [TimelineItem] = []
     /// Teil-Agenten dieses Streams: toolUseId des `Task`/`Agent`-Aufrufs → Anzeigename. Reine
     /// Laufzeit-Anzeige, damit die Werkzeug-Aufrufe eines Teil-Agenten zuordenbar sind.
@@ -67,6 +77,12 @@ final class InstanceStore {
     /// Offene Berechtigungsanfragen — treiben das prominente Banner. Werden NUR durch expliziten
     /// menschlichen Tap beantwortet (docs/architecture.md §6 P3#16), nie automatisch.
     private(set) var permissions: [PermissionRequestInfo] = []
+    /// Konten-Registry der Instanz (Namen, Default für neue Streams, Kontingent-Sperren).
+    private(set) var accounts = AccountsState()
+    /// Plan-Nutzungslimits je Konto-ID. Gefüllt aus `account_usage` — mads misst das am Ende eines
+    /// Turns, ein ruhendes Konto hat darum ggf. keinen Eintrag (die Anzeige bleibt dann leer, statt
+    /// eine erfundene 0 % zu behaupten).
+    private(set) var usage: [String: AccountUsage] = [:]
 
     private var timelineSeq = 0
     private let ringCapacity = 800
@@ -75,13 +91,27 @@ final class InstanceStore {
         switch msg {
         case .projectResolved(let info):
             project = info
-        case .statusUpdate(let id, let status, let step, let label, let role):
-            mutate(id) {
-                $0.status = status
-                $0.currentStep = step
-                if let label, !label.isEmpty { $0.label = label }   // nur überschreiben, wenn geliefert
-                if let role, !role.isEmpty { $0.role = role }
+        case .statusUpdate(let u):
+            mutate(u.agentId) {
+                $0.status = u.status
+                $0.currentStep = u.currentStep
+                // Nur überschreiben, wenn geliefert: ältere mads-Stände senden einen Teil der Felder
+                // gar nicht, und ein `nil` daraus würde einen bekannten Wert löschen statt ihn zu lassen.
+                if let label = u.label, !label.isEmpty { $0.label = label }
+                if let role = u.role, !role.isEmpty { $0.role = role }
+                if let accountId = u.accountId, !accountId.isEmpty { $0.accountId = accountId }
+                if let sandboxMode = u.sandboxMode { $0.sandboxMode = sandboxMode }
+                if let model = u.model, !model.isEmpty { $0.model = model }
+                if let effort = u.effort { $0.effort = effort }
+                if let permissionMode = u.permissionMode { $0.permissionMode = permissionMode }
             }
+        case .accountsUpdate(let state):
+            accounts = state
+        case .accountUsage(let accountId, let u):
+            guard !accountId.isEmpty else { break }
+            usage[accountId] = u
+        case .modelActive(let id, let active, let mismatch):
+            mutate(id) { $0.activeModel = active; $0.modelMismatch = mismatch }
         case .costUpdate(let id, let cost, let turns, let inp, let out):
             mutate(id) {
                 $0.costUsd = cost

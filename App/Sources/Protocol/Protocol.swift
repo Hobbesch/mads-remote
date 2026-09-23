@@ -5,8 +5,11 @@ import Foundation
 /// damit neue Protokoll-Nachrichten die App nicht brechen (Forward-Kompatibilität).
 enum SidecarMessage: Sendable {
     case projectResolved(ProjectInfo)
-    case statusUpdate(agentId: String, status: AgentStatus, currentStep: String?, label: String?, role: String?)
+    case statusUpdate(StatusUpdate)
     case costUpdate(agentId: String, totalCostUsd: Double, numTurns: Int, inputTokens: Int?, outputTokens: Int?)
+    case accountsUpdate(AccountsState)                       // Konten-Registry (Namen, Default, Cooldowns)
+    case accountUsage(accountId: String, usage: AccountUsage) // Plan-Nutzungslimits (5 Std. / Woche / Woche-Opus)
+    case modelActive(agentId: String, active: String, mismatch: Bool) // real vom SDK gelaufenes Modell
     case gitStatus(agentId: String, behind: Int, ahead: Int, dirty: Bool, syncBlocked: Bool?)
     case prUpdate(agentId: String, pr: PullRequestInfo?)
     case agentEvent(agentId: String, event: AgentEvent)
@@ -18,6 +21,99 @@ enum SidecarMessage: Sendable {
     case agentDone(agentId: String, subtype: String, isError: Bool)
     case error(agentId: String?, scope: String, code: String, message: String, recoverable: Bool)
     case unknown(type: String)
+}
+
+/// Die Stamm-Daten eines `status_update`. Eigener Typ (wie `PermissionRequestInfo`), weil die
+/// Nachricht inzwischen genug Felder trägt, dass eine Tupel-Assoziation unlesbar würde.
+///
+/// `accountId`/`sandboxMode`/`model`/`effort`/`permissionMode` liefert der Sidecar mit: er hat den
+/// Prozess gestartet und besitzt die Wahrheit. Für die App sind sie die EINZIGE Quelle — anders als
+/// das Mac-Frontend, das diese Werte selbst setzt und deshalb ohnehin kennt.
+struct StatusUpdate: Sendable, Hashable {
+    let agentId: String
+    var status: AgentStatus = .running
+    var currentStep: String?
+    var label: String?
+    var role: String?
+    var accountId: String?
+    var sandboxMode: SandboxMode?
+    var model: String?              // ANGEFORDERT (Picker-Wunsch); real → `model_active`
+    var effort: EffortMode?
+    var permissionMode: PermissionMode?
+}
+
+/// Sandbox-Betriebsart eines Sub-Streams (`SandboxMode` in shared/protocol.ts).
+enum SandboxMode: String, Codable, Sendable, CaseIterable {
+    case on, targets, off
+}
+
+/// Permission-Modus eines Streams (`PermissionMode` in shared/protocol.ts). Die Bridge nimmt seit
+/// 2026-09-23 alle diese Werte auch aus der Ferne an (volle Parität zum Mac-Picker).
+enum PermissionMode: String, Codable, Sendable, CaseIterable {
+    case `default`, acceptEdits, plan, auto, bypassPermissions, dontAsk
+}
+
+/// Reasoning-Effort (`EffortMode` in shared/protocol.ts).
+enum EffortMode: String, Codable, Sendable, CaseIterable {
+    case low, medium, high, xhigh, ultracode
+}
+
+/// Ein Claude-Konto, wie es die App braucht: Anzeigename und (falls hinterlegt) E-Mail.
+///
+/// BEWUSST unvollständig gespiegelt: `configDir` (absoluter Mac-Pfad) und `tokenKeychainService`
+/// bleiben am Mac. Das Gerät wählt ein Konto über die ID — wo dessen Zugangsdaten liegen, geht es
+/// nichts an, und ein Pfad im App-Speicher wäre nur zusätzliche Preisgabe.
+struct AccountProfile: Codable, Sendable, Hashable, Identifiable {
+    let id: String
+    let label: String
+    var email: String?
+}
+
+/// Kontingent-Sperre eines Kontos (`AccountCooldown`): bis wann, welches Fenster, schon abgewiesen?
+struct AccountCooldown: Codable, Sendable, Hashable {
+    let until: Double          // ms seit Epoche
+    var window: String?
+    var rejected: Bool = false
+    var utilization: Double?
+}
+
+/// Konten-Registry der verbundenen Instanz (`AccountsState`).
+struct AccountsState: Codable, Sendable, Hashable {
+    var profiles: [AccountProfile] = []
+    /// Konto für NEUE Streams (Vorauswahl).
+    var activeId: String = ""
+    var cooldowns: [String: AccountCooldown] = [:]
+
+    /// Anzeigename einer Profil-ID; unbekannt → die ID selbst (besser als „?").
+    func label(_ id: String?) -> String {
+        guard let id else { return "—" }
+        return profiles.first { $0.id == id }?.label ?? id
+    }
+
+    /// Steht dieses Konto gerade unter Kontingent-Sperre? Abgelaufene Sperren zählen nicht.
+    func isOnCooldown(_ id: String, now: Date = Date()) -> Bool {
+        guard let cd = cooldowns[id] else { return false }
+        return cd.until > now.timeIntervalSince1970 * 1000
+    }
+}
+
+/// Ein Kontingent-Fenster (`UsageWindow`): Auslastung in PROZENT (0–100) + Zurücksetzung.
+struct UsageWindow: Codable, Sendable, Hashable {
+    var utilization: Double?
+    var resetsAt: Double?      // ms seit Epoche
+}
+
+/// Plan-Nutzungslimits eines Kontos (`account_usage`). Die drei Fenster, die der Mac auch zeigt.
+struct AccountUsage: Codable, Sendable, Hashable {
+    var fiveHour: UsageWindow?
+    var sevenDay: UsageWindow?
+    var sevenDayOpus: UsageWindow?
+    var subscription: String?
+
+    /// Höchste gemeldete Auslastung über alle Fenster — treibt den Warnpunkt am Menü-Icon.
+    var peakUtilization: Double {
+        [fiveHour, sevenDay, sevenDayOpus].compactMap { $0?.utilization }.max() ?? 0
+    }
 }
 
 struct ProjectInfo: Codable, Sendable, Hashable {
@@ -114,6 +210,8 @@ private enum MsgKey: String, CodingKey {
     case behind, ahead, dirty, syncBlocked, pr, event, events, reason, message, subtype, isError
     case scope, code, recoverable, project, requestId, requestIds, toolName, kind, label, role, questions
     case input, decisionReason, blockedPath, commandKind
+    case accountId, sandboxMode, model, effort, permissionMode
+    case accounts, fiveHour, sevenDay, sevenDayOpus, subscription, active, mismatch
 }
 
 extension AgentEvent: Decodable {
@@ -168,12 +266,20 @@ extension SidecarMessage: Decodable {
         case "project_resolved":
             self = .projectResolved(try c.decode(ProjectInfo.self, forKey: .project))
         case "status_update":
-            self = .statusUpdate(
+            // Enum-Felder TOLERANT dekodieren (`try?`): ein mads mit einem neuen Sandbox-/Permission-
+            // Modus darf nicht die ganze Nachricht sprengen — dann stünde der Stream still, statt das
+            // eine unbekannte Feld leer zu lassen.
+            self = .statusUpdate(StatusUpdate(
                 agentId: try agentId(),
                 status: try c.decodeIfPresent(AgentStatus.self, forKey: .status) ?? .running,
                 currentStep: try c.decodeIfPresent(String.self, forKey: .currentStep),
                 label: try c.decodeIfPresent(String.self, forKey: .label),
-                role: try c.decodeIfPresent(String.self, forKey: .role))
+                role: try c.decodeIfPresent(String.self, forKey: .role),
+                accountId: try c.decodeIfPresent(String.self, forKey: .accountId),
+                sandboxMode: (try? c.decodeIfPresent(SandboxMode.self, forKey: .sandboxMode)) ?? nil,
+                model: try c.decodeIfPresent(String.self, forKey: .model),
+                effort: (try? c.decodeIfPresent(EffortMode.self, forKey: .effort)) ?? nil,
+                permissionMode: (try? c.decodeIfPresent(PermissionMode.self, forKey: .permissionMode)) ?? nil))
         case "cost_update":
             self = .costUpdate(
                 agentId: try agentId(),
@@ -181,6 +287,21 @@ extension SidecarMessage: Decodable {
                 numTurns: try c.decodeIfPresent(Int.self, forKey: .numTurns) ?? 0,
                 inputTokens: try c.decodeIfPresent(Int.self, forKey: .inputTokens),
                 outputTokens: try c.decodeIfPresent(Int.self, forKey: .outputTokens))
+        case "accounts_update":
+            self = .accountsUpdate(try c.decodeIfPresent(AccountsState.self, forKey: .accounts) ?? AccountsState())
+        case "account_usage":
+            self = .accountUsage(
+                accountId: try c.decodeIfPresent(String.self, forKey: .accountId) ?? "",
+                usage: AccountUsage(
+                    fiveHour: try c.decodeIfPresent(UsageWindow.self, forKey: .fiveHour),
+                    sevenDay: try c.decodeIfPresent(UsageWindow.self, forKey: .sevenDay),
+                    sevenDayOpus: try c.decodeIfPresent(UsageWindow.self, forKey: .sevenDayOpus),
+                    subscription: try c.decodeIfPresent(String.self, forKey: .subscription)))
+        case "model_active":
+            self = .modelActive(
+                agentId: try agentId(),
+                active: try c.decodeIfPresent(String.self, forKey: .active) ?? "",
+                mismatch: try c.decodeIfPresent(Bool.self, forKey: .mismatch) ?? false)
         case "git_status":
             self = .gitStatus(
                 agentId: try agentId(),
