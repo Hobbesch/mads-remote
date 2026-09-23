@@ -285,6 +285,32 @@ final class InstanceSession {
         await sendCommand(StreamCommand.requestAccounts)
     }
 
+    /// Einen neuen Sub-Stream starten. Gibt die vergebene agentId zurück, wenn der Befehl rausging —
+    /// die Randleiste schaltet dann darauf um. `nil` = nicht zugestellt (der Fehler steht im Store).
+    ///
+    /// Die Kachel wird NICHT optimistisch angelegt: mads meldet den neuen Stream mit seinem ersten
+    /// `status_update`, und erst das ist die Wahrheit. Ein optimistischer Eintrag hätte bei einem
+    /// abgelehnten Start eine Kachel hinterlassen, die zu keinem Prozess gehört.
+    func startStream(
+        label: String, prompt: String, model: String? = nil, effort: EffortMode? = nil,
+        permissionMode: PermissionMode = .auto, sandboxMode: SandboxMode? = nil,
+        accountId: String? = nil
+    ) async -> String? {
+        let trimmedPrompt = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedLabel = label.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedPrompt.isEmpty, !trimmedLabel.isEmpty else { return nil }
+
+        // Kleingeschrieben wie die `crypto.randomUUID()`-Ids am Mac: die agentId wird zum
+        // Verzeichnisnamen des Worktrees, und gemischte Schreibweisen nebeneinander sind dort nur
+        // verwirrend.
+        let agentId = UUID().uuidString.lowercased()
+        let delivered = await sendCommand(StreamCommand.startAgent(
+            agentId: agentId, label: trimmedLabel, prompt: trimmedPrompt,
+            project: store.project, model: model, effort: effort,
+            permissionMode: permissionMode, sandboxMode: sandboxMode, accountId: accountId))
+        return delivered ? agentId : nil
+    }
+
     // MARK: - file-rpc (P3.2) — Datei-Baum + Markdown lesen/schreiben
 
     /// Request bauen (Args auf dem MainActor) und nur den fertigen String an die Actor reichen.

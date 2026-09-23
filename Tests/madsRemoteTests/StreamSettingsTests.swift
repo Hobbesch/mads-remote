@@ -176,6 +176,77 @@ struct StreamSettingsTests {
         #expect(!PermissionMode.plan.runsUnattended)
     }
 
+    // MARK: - Neuer Stream
+
+    /// Der Branch MUSS zeichengenau dem entsprechen, was `slugifyBranch` in `src/store.ts` liefert.
+    /// Die Erwartungen stammen aus einem Lauf der JS-Fassung — driftet eine Seite, entstehen für
+    /// denselben Stream-Namen zwei Branches, die dank der 32-Zeichen-Kürzung auch noch fast gleich
+    /// aussehen. Die NFKD-Eigenheit („über" → `u-ber`, nicht `uber`) gehört ausdrücklich dazu.
+    @Test func branchNameMirrorsTheMacSlug() {
+        #expect(StreamCommand.branchName(for: "auth fix") == "mads/auth-fix")
+        #expect(StreamCommand.branchName(for: "  Auth  Fix!! ") == "mads/auth-fix")
+        #expect(StreamCommand.branchName(for: "API rate-limit") == "mads/api-rate-limit")
+        #expect(StreamCommand.branchName(for: "über") == "mads/u-ber")
+        #expect(StreamCommand.branchName(for: "Ärger mit Größe") == "mads/a-rger-mit-gro-e")
+        #expect(StreamCommand.branchName(for: "Ein sehr langer Streamname der abgeschnitten wird")
+                == "mads/ein-sehr-langer-streamname-der-a")
+        // Nie ein leerer Branch: ohne Fallback hiesse er schlicht „mads/".
+        #expect(StreamCommand.branchName(for: "") == "mads/task")
+        #expect(StreamCommand.branchName(for: "---") == "mads/task")
+    }
+
+    @Test func startAgentCarriesWorktreeTripleTogether() throws {
+        let project = ProjectInfo(
+            projectId: "p", repoRoot: "/Users/x/coding/mads",
+            owner: "Hobbesch", repo: "mads", defaultBranch: "main")
+        let msg = StreamCommand.startAgent(
+            agentId: "new-1", label: "auth fix", prompt: "Bau den Login um.", project: project,
+            model: "claude-sonnet-5", effort: .high, permissionMode: .auto,
+            sandboxMode: .on, accountId: "work")
+
+        #expect(msg["type"] as? String == "start_agent")
+        #expect(msg["role"] as? String == "sub")        // nie ein zweiter Integrator
+        #expect(msg["label"] as? String == "auth fix")
+        #expect(msg["permissionMode"] as? String == "auto")
+        #expect(msg["model"] as? String == "claude-sonnet-5")
+        #expect(msg["accountId"] as? String == "work")
+        // Die drei gehören zusammen — fehlt eines, legt der Sidecar keinen Worktree an.
+        #expect(msg["repoRoot"] as? String == "/Users/x/coding/mads")
+        #expect(msg["branch"] as? String == "mads/auth-fix")
+        #expect(msg["baseRef"] as? String == "origin/main")
+        // Sandbox „on" ist der Default und wird NICHT mitgeschickt (wie im Mac-Dialog).
+        #expect(msg["sandboxMode"] == nil)
+    }
+
+    @Test func startAgentWithoutProjectOmitsTheWholeWorktreeTriple() {
+        let msg = StreamCommand.startAgent(
+            agentId: "new-1", label: "x", prompt: "y", project: nil,
+            model: nil, effort: nil, permissionMode: .default, sandboxMode: .off, accountId: nil)
+        #expect(msg["repoRoot"] == nil)
+        #expect(msg["branch"] == nil)
+        #expect(msg["baseRef"] == nil)
+        #expect(msg["model"] == nil)
+        #expect(msg["accountId"] == nil)
+        #expect(msg["sandboxMode"] as? String == "off")   // abweichend vom Default → mitschicken
+    }
+
+    /// Leerer Name oder leerer Auftrag darf gar nichts senden — sonst entstünde ein Stream ohne
+    /// Auftrag, der sofort auf eine Anweisung wartet, und ein Branch namens `mads/task`.
+    @Test func startStreamRefusesEmptyInput() async {
+        let session = InstanceSession(instance: DiscoveredInstance(testId: "x", name: "n", project: "p", fingerprint: nil))
+        #expect(await session.startStream(label: "", prompt: "etwas") == nil)
+        #expect(await session.startStream(label: "name", prompt: "   ") == nil)
+        #expect(session.store.lastError == nil)   // keine Verbindung angefasst, also auch keine Meldung
+    }
+
+    /// Ohne Verbindung gibt es keine agentId zurück — der Aufrufer darf dann NICHT umschalten,
+    /// sonst zeigte die Ansicht auf einen Stream, den es nie geben wird.
+    @Test func startStreamReturnsNilWhenUndelivered() async {
+        let session = InstanceSession(instance: DiscoveredInstance(testId: "x", name: "n", project: "p", fingerprint: nil))
+        #expect(await session.startStream(label: "auth fix", prompt: "Bau den Login um.") == nil)
+        #expect(session.store.lastError == "Nicht verbunden.")
+    }
+
     // MARK: - Randleiste
 
     @Test func railInitialsStayReadable() {

@@ -14,6 +14,9 @@ struct StreamDetailView: View {
     /// landen — und beim Zurückschalten auch nicht weg sein.
     @State private var drafts: [String: String] = [:]
     @State private var showSettings = false
+    @State private var showNewStream = false
+    /// Der gerade beauftragte Stream, solange mads ihn noch nicht gemeldet hat.
+    @State private var justStarted: String?
     @StateObject private var dictation = DictationController()
 
     init(session: InstanceSession, streamId: String) {
@@ -37,11 +40,8 @@ struct StreamDetailView: View {
                     PermissionBanner(session: session, agentId: streamId)
                     timeline
                 }
-                // Nur bei mehr als einem Stream: bei einem einzigen wäre die Leiste 44 pt ohne Nutzen.
-                if store.order.count > 1 {
-                    Divider()
-                    StreamRail(session: session, selected: $streamId)
-                }
+                Divider()
+                StreamRail(session: session, selected: $streamId, onNewStream: { showNewStream = true })
             }
             composer
         }
@@ -50,9 +50,21 @@ struct StreamDetailView: View {
         .onDisappear { dictation.cancel() } // Ansicht verlassen → laufende Diktat-Aufnahme verwerfen
         // Stream gewechselt → ein laufendes Diktat gehört nicht in den neuen Stream.
         .onChange(of: streamId) { _, _ in dictation.cancel() }
+        // mads hat den neuen Stream gemeldet → die Start-Markierung ist verbraucht.
+        .onChange(of: stream?.id) { _, id in if id != nil, id == justStarted { justStarted = nil } }
         .toolbar { ToolbarItem(placement: .topBarTrailing) { settingsButton } }
         .sheet(isPresented: $showSettings) {
             StreamSettingsSheet(session: session, streamId: streamId)
+        }
+        .sheet(isPresented: $showNewStream) {
+            // Direkt auf den neuen Stream umschalten: man hat ihn gerade beauftragt und will sehen,
+            // wie er anläuft. Die Kachel entsteht aus mads' erstem status_update — bis dahin zeigt
+            // die Ansicht „Stream nicht mehr vorhanden", was hier „noch nicht da" heisst und sich
+            // nach Sekundenbruchteilen von selbst auflöst.
+            NewStreamSheet(session: session, from: stream) { newId in
+                justStarted = newId
+                streamId = newId
+            }
         }
     }
 
@@ -104,6 +116,14 @@ struct StreamDetailView: View {
                         Color.clear.frame(height: 1).id(bottomID) // Scroll-Anker am Ende
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding()
+                } else if justStarted == streamId {
+                    // Gerade beauftragt: die Kachel entsteht erst aus mads' erstem status_update.
+                    // Ohne diesen Zweig stünde hier „nicht mehr vorhanden" — also das Gegenteil.
+                    HStack(spacing: 8) {
+                        ProgressView().controlSize(.small)
+                        Text("Stream startet …").foregroundStyle(.secondary)
+                    }
                     .padding()
                 } else {
                     Text("Stream nicht mehr vorhanden").foregroundStyle(.secondary).padding()

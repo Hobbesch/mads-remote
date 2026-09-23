@@ -15,6 +15,8 @@ import SwiftUI
 struct StreamRail: View {
     let session: InstanceSession
     @Binding var selected: String
+    /// Tap auf „+". Der Aufrufer öffnet das Sheet — die Leiste kennt es nicht, sie meldet nur.
+    let onNewStream: () -> Void
 
     private var store: InstanceStore { session.store }
 
@@ -27,6 +29,7 @@ struct StreamRail: View {
                             item(stream)
                         }
                     }
+                    newStreamButton
                 }
                 .padding(.vertical, 8)
                 .padding(.horizontal, 4)
@@ -39,6 +42,21 @@ struct StreamRail: View {
         }
         .frame(width: 44)
         .background(.bar)
+    }
+
+    /// „+" am Ende der Leiste: einen weiteren Sub-Stream eröffnen. Ohne stehende Verbindung
+    /// gesperrt — ein Tap verpuffte sonst stumm, genau wie es beim Senden schon einmal der Fall war.
+    private var newStreamButton: some View {
+        Button(action: onNewStream) {
+            Image(systemName: "plus")
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(session.phase == .live ? Color.accentColor : .secondary)
+                .frame(width: 36, height: 38)
+                .background(Color.secondary.opacity(0.10), in: RoundedRectangle(cornerRadius: 9))
+        }
+        .buttonStyle(.plain)
+        .disabled(session.phase != .live)
+        .accessibilityLabel("Neuen Stream starten")
     }
 
     private func item(_ stream: Stream) -> some View {
