@@ -13,9 +13,19 @@ struct InstanceListView: View {
     /// der Stand von vorher.
     @State private var known: [KnownInstance] = []
 
+    /// Erst nach kurzer Anlaufzeit über eine nicht laufende Suche reden — beim Start ist der
+    /// `NWBrowser` für einen Moment noch nicht `ready`, und ein sofortiger Hinweis wäre ein
+    /// Fehlalarm, der bei jedem Öffnen aufblitzt.
+    @State private var settled = false
+
     private var instances: [DiscoveredInstance] {
         DiscoveredInstance.mergingKnown(browser.instances, known: known)
     }
+
+    /// Die Suche läuft nicht (mehr) — kein WLAN, Local-Network-Erlaubnis entzogen, oder der Browser
+    /// ist nach einer Suspendierung nicht wiedergekommen. Das gehört sichtbar gemacht: sonst sieht
+    /// „gerade nichts im Netz" genauso aus wie „ich suche gar nicht".
+    private var searchStalled: Bool { settled && !browser.isBrowsing }
 
     var body: some View {
         List {
@@ -34,9 +44,27 @@ struct InstanceListView: View {
                     }
                 }
             }
+
+            if searchStalled {
+                Label(
+                    "Suche im lokalen Netz läuft nicht — WLAN prüfen und in den iOS-Einstellungen die Erlaubnis „Lokales Netzwerk“ für mads Remote. Zum Neustarten nach unten ziehen.",
+                    systemImage: "exclamationmark.triangle"
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
         }
         .navigationTitle("mads Remote")
-        .task { known = KnownInstanceStore.all() }
+        // Manueller Ausweg, wenn die Liste veraltet wirkt: Suche neu aufsetzen statt App neu starten.
+        .refreshable {
+            browser.restart()
+            known = KnownInstanceStore.all()
+        }
+        .task {
+            known = KnownInstanceStore.all()
+            try? await Task.sleep(for: .seconds(3))
+            settled = true
+        }
     }
 }
 
