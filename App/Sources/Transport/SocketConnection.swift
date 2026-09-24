@@ -1,8 +1,9 @@
 import Foundation
+import Network
 
 /// Ereignisse aus dem Receive-Loop, die die Session (InstanceSession) braucht (Token speichern etc.).
 enum ConnectionEvent: Sendable {
-    /// WS-Handshake steht wirklich (`didOpenWithProtocol`) — erst jetzt Auth/Pairing anstoßen.
+    /// WS-Handshake steht wirklich (`NWConnection` ist `ready`) — erst jetzt Auth/Pairing anstoßen.
     case connected
     /// `endpoints`: die von der Bridge gemeldeten „host:port" — die Session merkt sie sich, damit
     /// das Gerät den Mac auch ohne mDNS wiederfindet. Leer bei älteren mads-Versionen.
@@ -12,18 +13,22 @@ enum ConnectionEvent: Sendable {
     case failed(String)
 }
 
-/// WSS-Verbindung zu einer mads-Instanz (docs/architecture.md §3a). `URLSessionWebSocketTask` mit
-/// SPKI-Pinning am Session-Delegate; Receive-Loop decodiert Frames, spiegelt Events in den
-/// `InstanceStore` (MainActor-Hop) und meldet Auth-/Pairing-Ergebnisse über `events`.
+/// WSS-Verbindung zu einer mads-Instanz (docs/architecture.md §3a). `NWConnection` mit
+/// `NWProtocolWebSocket` und SPKI-Pinning im TLS-Verify-Block; Receive-Loop decodiert Frames,
+/// spiegelt Events in den `InstanceStore` (MainActor-Hop) und meldet Auth-/Pairing-Ergebnisse
+/// über `events`.
 actor SocketConnection {
     nonisolated let events: AsyncStream<ConnectionEvent>
 
     private let url: URL
     private let store: InstanceStore
-    private let session: URLSession
-    private let delegate: PinningDelegate
+    private let connection: NWConnection
+    private let queue = DispatchQueue(label: "mads-remote.socket")
     private let eventsCont: AsyncStream<ConnectionEvent>.Continuation
-    private var task: URLSessionWebSocketTask?
+    private var started = false
+    /// Endzustand erreicht (Fehler, Schliessen oder Abbruch) — verhindert doppelte Events und
+    /// lässt den `cancelled`-Zustand nach einem eigenen `disconnect()` stumm durchgehen.
+    private var finished = false
     /// Offene file-rpc-Requests (id → Continuation), aufgelöst durch das passende file-rpc-reply.
     private var pending: [String: CheckedContinuation<String, Never>] = [:]
     /// Timeout-Tasks je Request — bei Reply gecancelt, damit kein `Task.sleep` liegen bleibt.
@@ -36,41 +41,97 @@ actor SocketConnection {
         guard let url = URL(string: "wss://\(encodedHost):\(port)/") else { return nil }
         self.url = url
         self.store = store
-        // Stream ZUERST bauen — der Pinning-Delegate meldet `didOpen` (echte Verbindung steht)
-        // darüber, damit die Session Pairing/Auth nicht optimistisch VOR dem Handshake anzeigt.
+        // Stream ZUERST bauen — `ready` meldet die stehende Verbindung darüber, damit die Session
+        // Pairing/Auth nicht optimistisch VOR dem Handshake anzeigt.
         let (events, eventsCont) = AsyncStream<ConnectionEvent>.makeStream()
         self.events = events
         self.eventsCont = eventsCont
-        self.delegate = PinningDelegate(pinnedFingerprintHex: pinnedFingerprintHex) {
-            eventsCont.yield(.connected)
-        }
-        self.session = URLSession(configuration: .ephemeral, delegate: delegate, delegateQueue: nil)
+        self.connection = NWConnection(
+            to: .url(url),
+            using: Self.parameters(pinnedFingerprintHex: pinnedFingerprintHex, queue: queue))
     }
 
-    /// Finaler Teardown, wenn die Verbindung dealloziert wird (Instanz verlassen / Pop): URLSession
-    /// invalidieren → WS schließen + Event-Stream beenden. Greift zuverlässig, weil der eventTask
-    /// jetzt den STREAM (nicht die Verbindung) hält → kein Retain-Cycle, der die Verbindung am Leben
-    /// hielte. So braucht es KEIN aggressives `onDisappear { disconnect }` mehr (das beim internen
-    /// Navigieren in einen Stream fälschlich trennte).
+    /// TLS- und WebSocket-Parameter; der gepinnte SPKI ist die EINZIGE Zertifikatsprüfung.
+    ///
+    /// Bewusst `Network.framework` statt `URLSession`: App Transport Security greift nur bei der
+    /// High-Level-API und nimmt „lokale" Ziele von der Zertifikatsprüfung aus — dazu zählen aber
+    /// nur die privaten Bereiche (10/8, 172.16/12, 192.168/16, `.local`), NICHT 100.64/10, aus dem
+    /// Tailscale & Co. ihre Adressen vergeben. Gegen eine LAN-IP liess ATS den gepinnten
+    /// Self-Signed-Leaf also durch, gegen die Overlay-IP brach es mit `NSURLError -1200` ab, BEVOR
+    /// das Pinning gefragt wurde — im Simulator gegen denselben Listener, dasselbe Zertifikat und
+    /// denselben Pin reproduziert (10.0.0.x offen, 100.64.x -1200).
+    ///
+    /// `sec_protocol_options_set_verify_block` ersetzt die System-Prüfung vollständig: es gilt nur
+    /// noch der beim Pairing gepinnte SPKI. Das ist strenger als ATS (eine öffentliche CA nützt
+    /// hier nichts) und unabhängig davon, aus welchem Adressbereich die Bridge erreichbar ist.
+    private static func parameters(pinnedFingerprintHex: String, queue: DispatchQueue) -> NWParameters {
+        let tls = NWProtocolTLS.Options()
+        sec_protocol_options_set_verify_block(
+            tls.securityProtocolOptions,
+            { _, trustRef, complete in
+                let trust = sec_trust_copy_ref(trustRef).takeRetainedValue()
+                guard let chain = SecTrustCopyCertificateChain(trust) as? [SecCertificate],
+                      let leaf = chain.first
+                else {
+                    complete(false)
+                    return
+                }
+                complete(SPKIPinning.matches(certificate: leaf, pinnedFingerprintHex: pinnedFingerprintHex))
+            },
+            queue)
+
+        let parameters = NWParameters(tls: tls)
+        let websocket = NWProtocolWebSocket.Options()
+        websocket.autoReplyPing = true
+        parameters.defaultProtocolStack.applicationProtocols.insert(websocket, at: 0)
+        return parameters
+    }
+
+    /// Finaler Teardown, wenn die Verbindung dealloziert wird (Instanz verlassen / Pop).
     deinit {
-        session.invalidateAndCancel()
+        connection.cancel()
         eventsCont.finish()
     }
 
     func connect() {
-        guard task == nil else { return }
-        let task = session.webSocketTask(with: url)
-        self.task = task
-        task.resume()
-        Task { await receiveLoop() }
+        guard !started else { return }
+        started = true
+
+        connection.stateUpdateHandler = { [weak self] state in
+            guard let self else { return }
+            switch state {
+            case .ready:
+                Task { await self.onReady() }
+            case .failed(let error):
+                Task { await self.fail("\(error)") }
+            case .waiting(let error):
+                // `NWConnection` meldet „abgelehnt"/„kein Weg dorthin" als `waiting` und wartet
+                // still auf bessere Zeiten. Hier ist das falsch: die Session probiert selbst den
+                // nächsten Kandidaten und hat einen Watchdog — also als Fehlschlag melden.
+                Task { await self.fail("\(error)") }
+            case .cancelled:
+                Task { await self.fail("Verbindung beendet") }
+            default:
+                break
+            }
+        }
+        connection.start(queue: queue)
     }
 
     func authenticate(token: String) async throws { try await send(OutgoingFrame.auth(token: token)) }
     func pair(pin: String, name: String) async throws { try await send(OutgoingFrame.pair(pin: pin, name: name)) }
 
     func send(_ text: String) async throws {
-        guard let task else { throw URLError(.notConnectedToInternet) }
-        try await task.send(.string(text))
+        guard started, !finished else { throw URLError(.notConnectedToInternet) }
+        let metadata = NWProtocolWebSocket.Metadata(opcode: .text)
+        let context = NWConnection.ContentContext(identifier: "text", metadata: [metadata])
+        try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
+            connection.send(
+                content: Data(text.utf8), contentContext: context, isComplete: true,
+                completion: .contentProcessed { error in
+                    if let error { cont.resume(throwing: error) } else { cont.resume() }
+                })
+        }
     }
 
     /// Einen bereits gebauten file-rpc-Request (Text, mit `id`) senden und auf das korrelierte
@@ -104,33 +165,63 @@ actor SocketConnection {
     }
 
     func disconnect() {
-        task?.cancel(with: .goingAway, reason: nil)
-        task = nil
+        guard !finished else { return }
+        finished = true
+        let metadata = NWProtocolWebSocket.Metadata(opcode: .close)
+        metadata.closeCode = .protocolCode(.goingAway)
+        let context = NWConnection.ContentContext(identifier: "close", metadata: [metadata])
+        connection.send(content: nil, contentContext: context, isComplete: true,
+                        completion: .contentProcessed { _ in })
+        connection.cancel()
         failAllPending()
         eventsCont.finish()
     }
 
     // MARK: - intern
 
-    private func receiveLoop() async {
-        guard let task else { return }
-        while true {
-            do {
-                switch try await task.receive() {
-                case .string(let text): await handle(text)
-                case .data(let data):
-                    if let s = String(data: data, encoding: .utf8) { await handle(s) }
-                @unknown default: break
-                }
-            } catch {
-                // Deckt auch den Pin-Mismatch ab (TLS-Trust-Abbruch → receive() wirft).
-                // URL mit ausgeben → Diagnose: nutzt die App die TXT-IP oder die link-local Adresse?
-                eventsCont.yield(.failed("[\(url.absoluteString)] \(error)"))
-                failAllPending() // offene file-rpc-Requests sofort scheitern lassen (nicht 10 s hängen)
-                eventsCont.finish()
-                return
-            }
+    private func onReady() {
+        guard !finished else { return }
+        eventsCont.yield(.connected)
+        receiveNext()
+    }
+
+    /// Endzustand: einmal melden, offene Requests auflösen, Stream schliessen. Die URL steht mit
+    /// im Text → Diagnose: welchen Kandidaten hat die App tatsächlich gewählt?
+    private func fail(_ reason: String) {
+        guard !finished else { return }
+        finished = true
+        eventsCont.yield(.failed("[\(url.absoluteString)] \(reason)"))
+        failAllPending()
+        eventsCont.finish()
+        connection.cancel()
+    }
+
+    /// Eine WS-Nachricht lesen. Alles, was der Callback weiterreicht, wird VOR dem Hop in den
+    /// Actor in `Sendable`-Werte übersetzt — `ContentContext`/`NWError` gehören nicht über die
+    /// Isolationsgrenze.
+    private func receiveNext() {
+        connection.receiveMessage { [weak self] data, context, _, error in
+            let isClose = (context?.protocolMetadata(definition: NWProtocolWebSocket.definition)
+                as? NWProtocolWebSocket.Metadata)?.opcode == .close
+            let text = data.flatMap { String(data: $0, encoding: .utf8) }
+            let errorText = error.map { "\($0)" }
+            guard let self else { return }
+            Task { await self.onMessage(text: text, isClose: isClose, errorText: errorText) }
         }
+    }
+
+    private func onMessage(text: String?, isClose: Bool, errorText: String?) async {
+        if let errorText {
+            fail(errorText)
+            return
+        }
+        if isClose {
+            fail("Gegenstelle hat die Verbindung geschlossen")
+            return
+        }
+        if let text { await handle(text) }
+        guard !finished else { return }
+        receiveNext()
     }
 
     private func handle(_ text: String) async {
